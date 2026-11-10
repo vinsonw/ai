@@ -6,6 +6,12 @@ import fg from "fast-glob";
 import writeFileAtomic from "write-file-atomic";
 import { stringify as stringifyYaml } from "yaml";
 import {
+  assertRetrospectiveInput,
+  detectAcceptanceMetadata,
+  writeAcceptancePackage,
+  type RetrospectiveInput,
+} from "./acceptance.js";
+import {
   git,
   loadConfig,
   prepareShardPipeline,
@@ -81,12 +87,14 @@ export interface StartWorkflowOptions {
 }
 
 interface WorkflowSession {
-  schemaVersion: 1;
+  schemaVersion: 2;
   repo: string;
   workspace: string;
   config: string;
   shards: string;
   task: string;
+  retrospective: string;
+  startedAt: string;
   mode: "editor-assisted" | "provider-automatic";
 }
 
@@ -144,8 +152,9 @@ function taskText(session: WorkflowSession): string {
 4. 四个分析维度的 evidence、gaps、recommendations 都必须包含具体内容，禁止保留默认占位文本。
 5. 每片完成后执行：
    \`npx @vinsonw2/asset-compound validate --input <该分片路径>\`
-6. 中断后重新执行 \`npx @vinsonw2/asset-compound start --yes\`，只会返回未完成片。
-7. 全部完成后执行 \`npx @vinsonw2/asset-compound deliver --yes\`。
+6. 按真实实践填写 \`${session.retrospective}\` 的四个复盘字段；禁止用推断、空值或占位文本。
+7. 中断后重新执行 \`npx @vinsonw2/asset-compound start --yes\`，只会返回未完成片。
+8. 全部完成后执行 \`npx @vinsonw2/asset-compound deliver --yes\`。
 
 可选 provider 自动模式需要显式传入 \`--provider <可执行文件>\`。provider 每次接收
 \`<shard-path> <task-path>\` 两个参数，并须原地更新 shard。凭证只能来自环境变量或系统 secret store，
@@ -155,12 +164,16 @@ function taskText(session: WorkflowSession): string {
 
 export async function startWorkflow(options: StartWorkflowOptions = {}) {
   const { repo, gitDir } = await repositoryContext(options.cwd ?? process.cwd());
+  if (await exists(path.join(repo, "NOT-ACCEPTANCE-DATA.md"))) {
+    throw new Error("仓库明确标记为非验收 fixture，不能启动正式验收工作流");
+  }
   const workspace = path.resolve(
     options.workspace ?? path.join(gitDir, "asset-compound"),
   );
   const configPath = path.join(workspace, "run.yaml");
   const shards = path.join(workspace, "work");
   const task = path.join(workspace, "AI-TASK.md");
+  const retrospective = path.join(workspace, "retrospective.json");
   const manifestPath = path.join(shards, "manifest.json");
   const existingManifest = (await exists(manifestPath))
     ? (JSON.parse(await readFile(manifestPath, "utf8")) as {
@@ -169,12 +182,13 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
       })
     : null;
   let config: RunConfig;
+  let previousSession: WorkflowSession | null = null;
   if (existingManifest) {
-    const previousSession = JSON.parse(
+    previousSession = JSON.parse(
       await readFile(path.join(workspace, "session.json"), "utf8"),
     ) as WorkflowSession;
-    if (previousSession.schemaVersion !== 1 || previousSession.repo !== repo) {
-      throw new Error("既有 workspace 与当前 Git 仓库不匹配");
+    if (previousSession.schemaVersion !== 2 || previousSession.repo !== repo) {
+      throw new Error("既有 workspace 不是当前验收契约版本；请使用新的 --workspace 重新 start");
     }
     if (options.config || options.requirements?.length || options.baseBranch) {
       throw new Error(
@@ -194,14 +208,31 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     resume: existingManifest !== null,
   });
   const session: WorkflowSession = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     repo,
     workspace,
     config: configPath,
     shards,
     task,
+    retrospective,
+    startedAt: previousSession?.startedAt ?? new Date().toISOString(),
     mode: options.provider ? "provider-automatic" : "editor-assisted",
   };
+  if (!(await exists(retrospective))) {
+    await writeText(
+      retrospective,
+      JSON.stringify(
+        {
+          maxHelp: "",
+          frictionAndTime: "",
+          coverageGaps: "",
+          improvements: "",
+        } satisfies RetrospectiveInput,
+        null,
+        2,
+      ),
+    );
+  }
   await writeText(task, taskText(session));
   await writeText(path.join(workspace, "session.json"), JSON.stringify(session, null, 2));
 
@@ -226,6 +257,7 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     workspace,
     effectiveConfig: configPath,
     task,
+    retrospective,
     ...prepared,
     ...(providerValidation
       ? {
@@ -259,21 +291,35 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
   const session = JSON.parse(
     await readFile(path.join(workspace, "session.json"), "utf8"),
   ) as WorkflowSession;
-  if (session.schemaVersion !== 1 || session.repo !== repo) {
+  if (session.schemaVersion !== 2 || session.repo !== repo) {
     throw new Error("workspace session 与当前 Git 仓库不匹配；请先运行 start");
   }
+  const retrospective = JSON.parse(
+    await readFile(session.retrospective, "utf8"),
+  ) as RetrospectiveInput;
+  assertRetrospectiveInput(retrospective);
+  const metadata = await detectAcceptanceMetadata(repo, session.startedAt);
   const validation = await validateShardedInput(session.shards);
   if (validation.pendingShards.length > 0) {
     throw new Error(`仍有 ${validation.pendingShards.length} 个未完成分片`);
   }
   const delivery = await runPipeline(repo, session.config, session.shards);
   const verification = await verifySecondRun(repo, session.config);
+  const acceptance = await writeAcceptancePackage({
+    repo,
+    config: await loadConfig(session.config),
+    delivery,
+    verification,
+    metadata,
+    retrospective,
+  });
   return {
     mode: session.mode,
     repo,
     workspace,
     delivery,
     verification,
-    acceptanceRoot: path.join(repo, "docs/可读化"),
+    acceptance,
+    acceptanceRoot: path.join(repo, "docs"),
   };
 }

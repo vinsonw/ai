@@ -23,6 +23,7 @@ npx @vinsonw2/asset-compound deliver --yes
 ```text
 .git/asset-compound/
 ├── AI-TASK.md
+├── retrospective.json
 ├── run.yaml
 ├── session.json
 └── work/
@@ -39,6 +40,7 @@ npx @vinsonw2/asset-compound deliver --yes
 - validate 成功后才原子更新完成标记和分片 hash。
 - resume 只返回未完成片；完成片被修改后会拒绝继续。
 - deliver 要求全量一一对应、无重复、顺序稳定、所有片已完成。
+- retrospective 的四个字段必须来自真实实践，不允许空值、占位文本或推断。
 
 ## 实质质量
 
@@ -68,6 +70,12 @@ provider 对每片接收 `<shard-path> <task-path>`，原地更新后由 CLI 立
 ## 验收边界
 
 - 至少两种真实非空来源，默认 requirement + git。
-- CLI 只写 `docs/可读化/**`；workspace 位于 `.git`。
+- CLI 输出标准 `docs/README.md`、`00-项目总览` 至 `07-AI资产` 分类目录；
+  底层机器 state 保留在 `docs/可读化/**`，workspace 位于 `.git`。
 - 示例和 fixture 不能作为真实验收数据。
-- `deliver` 产出完整验收目录并返回 `secondRunZeroDiff: true`。
+- `deliver` 只有在 1.1、2.1、2.2、R1–R6、V1–V8、结构/内容/证据门禁和
+  `secondRunZeroDiff` 全部通过时才成功。
+
+2.1 五类材料为：完整 2.2 报告、至少两种真实数据源的提取源清单、逐资产四维
+分析、回写结果、验证证据。2.2 报告必须包含基本信息、R1–R6 环节对照、提取源
+清单、四维分析、回写记录、防重复验证和复盘，不允许空字段。

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   cp,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -64,6 +65,9 @@ async function enrich(file) {
         recommendations: ["将稳定规则沉淀为模板并记录适用边界。"],
       },
     };
+    for (const finding of Object.values(item.asset.analysis)) {
+      finding.evidence.unshift(`本资产来源证据：${item.sourceExcerpt.text}`);
+    }
   }
   await writeFile(file, `${JSON.stringify(shard, null, 2)}\n`, "utf8");
 }
@@ -83,6 +87,13 @@ try {
     recursive: true,
   });
   await rm(path.join(repo, "run.yaml"), { force: true });
+  await rm(path.join(repo, "NOT-ACCEPTANCE-DATA.md"), { force: true });
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await writeFile(
+    path.join(repo, "src", "App.tsx"),
+    "export function App() { return <main>Asset compound smoke</main>; }\n",
+    "utf8",
+  );
   await writeFile(
     path.join(repo, "package.json"),
     `${JSON.stringify({ name: "packed-react-fixture", private: true }, null, 2)}\n`,
@@ -92,6 +103,12 @@ try {
   await run("git", ["init", "-b", "main"]);
   await run("git", ["config", "user.name", "Packed Smoke"]);
   await run("git", ["config", "user.email", "packed-smoke@example.invalid"]);
+  await run("git", [
+    "remote",
+    "add",
+    "origin",
+    "https://example.invalid/demo/packed-react-fixture.git",
+  ]);
   await run("git", ["add", "."]);
   await run("git", ["commit", "-m", "fixture: realistic React baseline"]);
   await run("git", ["checkout", "-b", "asset-compounding/packed-smoke"]);
@@ -110,6 +127,20 @@ try {
     await enrich(shard);
     await cli(["validate", "--input", shard]);
   }
+  await writeFile(
+    started.retrospective,
+    `${JSON.stringify(
+      {
+        maxHelp: "分片让小上下文模型逐项完成真实材料分析。",
+        frictionAndTime: "主要耗时在逐片核对来源证据和补充四维结论。",
+        coverageGaps: "合成 fixture 不包含真实截图和外部设计平台。",
+        improvements: "后续在真实 React 仓库补充截图和链接证据。",
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   const resumed = JSON.parse((await cli(["start", "--yes"])).stdout);
   const delivered = JSON.parse((await cli(["deliver", "--yes"])).stdout);
   const skill = JSON.parse(
@@ -139,16 +170,28 @@ try {
   if (!(await readFile(skill.skillFile, "utf8")).includes("# 资产复利")) {
     throw new Error("packed Cursor adapter is incomplete");
   }
+  if (
+    !(await readFile(
+      path.join(repo, "docs/07-AI资产/资产复利/资产复利实践报告.md"),
+      "utf8",
+    )).includes("# 资产复利实践报告")
+  ) {
+    throw new Error("packed acceptance report is incomplete");
+  }
 
   process.stdout.write(
     `${JSON.stringify(
       {
+        fixture: "合成 React 风格仓，仅验证工具行为，不作为真实 V2 验收证据",
         package: "@vinsonw2/asset-compound",
         source: "locally installed npm pack tarball",
         manualYaml: false,
         environmentVariables: false,
         commands: ["asset-compound start --yes", "asset-compound deliver --yes"],
         shardedResume: true,
+        standardDocs: true,
+        acceptanceContractBehavior: "1.1 / 2.1 / 2.2 / R1-R6 / V1-V8",
+        internalPerShardValidation: true,
         cursorAdapter: true,
         first: delivered.delivery.counts,
         secondRunZeroDiff: true,

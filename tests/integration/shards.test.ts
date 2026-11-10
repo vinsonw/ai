@@ -58,10 +58,13 @@ function records(): ScanRecord[] {
 
 async function enrichShard(file: string): Promise<void> {
   const shard = JSON.parse(await readFile(file, "utf8")) as AssetShard;
-  shard.items = shard.items.map((item) => ({
-    ...item,
-    asset: enrichAssets([item.asset])[0]!,
-  }));
+  shard.items = shard.items.map((item) => {
+    const asset = enrichAssets([item.asset])[0]!;
+    for (const finding of Object.values(asset.analysis)) {
+      finding.evidence.unshift(`本资产来源证据：${item.sourceExcerpt.text}`);
+    }
+    return { ...item, asset };
+  });
   await writeFile(file, `${JSON.stringify(shard, null, 2)}\n`, "utf8");
 }
 
@@ -211,6 +214,20 @@ describe("分片目录 finalize", () => {
 });
 
 describe("零配置 start/deliver", () => {
+  it("拒绝明确标记为非验收数据的 fixture", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "asset-marked-fixture-"));
+    temporary.push(repo);
+    await cp(fixture, repo, { recursive: true });
+    await git(repo, ["init", "-b", "main"]);
+    await git(repo, ["config", "user.name", "Fixture Test"]);
+    await git(repo, ["config", "user.email", "fixture@example.invalid"]);
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "fixture: marked non-acceptance data"]);
+    await expect(startWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
+      "非验收 fixture",
+    );
+  });
+
   it("从 React 风格仓库用两条短命令完成 editor-assisted 交付", async () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "asset-zero-config-"));
     temporary.push(repo);
@@ -230,6 +247,7 @@ describe("零配置 start/deliver", () => {
     await git(repo, ["init", "-b", "main"]);
     await git(repo, ["config", "user.name", "Zero Config"]);
     await git(repo, ["config", "user.email", "zero@example.invalid"]);
+    await git(repo, ["remote", "add", "origin", "https://secret-token@example.invalid/demo/react-style-fixture.git"]);
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-m", "feat: realistic react baseline"]);
     await git(repo, ["checkout", "-b", "asset-compounding/zero-config"]);
@@ -247,6 +265,40 @@ describe("零配置 start/deliver", () => {
       await enrichShard(file);
       await validateShardedInput(file);
     }
+    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
+      "复盘字段",
+    );
+    await writeFile(
+      started.retrospective,
+      `${JSON.stringify(
+        {
+          maxHelp: "TODO",
+          frictionAndTime: "TODO",
+          coverageGaps: "TODO",
+          improvements: "TODO",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
+      "占位内容",
+    );
+    await writeFile(
+      started.retrospective,
+      `${JSON.stringify(
+        {
+          maxHelp: "分片让小上下文模型可以逐项完成分析并保留断点。",
+          frictionAndTime: "测试实践主要耗时在逐片补充四维证据。",
+          coverageGaps: "当前 fixture 未覆盖真实截图和外部设计平台。",
+          improvements: "后续增加真实仓库截图采集和链接检查。",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     const delivered = await deliverWorkflow({ cwd: repo, yes: true });
     expect(delivered.verification.secondRunZeroDiff).toBe(true);
@@ -259,5 +311,71 @@ describe("零配置 start/deliver", () => {
     expect(
       await readFile(path.join(repo, "docs/可读化/source-manifest.yaml"), "utf8"),
     ).toContain("sourceTypes");
+    const report = await readFile(
+      path.join(repo, "docs/07-AI资产/资产复利/资产复利实践报告.md"),
+      "utf8",
+    );
+    expect(report).toContain("# 资产复利实践报告");
+    expect(report).toContain("## 环节对照表");
+    expect(report).toContain("## 防重复验证");
+    expect(report).toContain("证据：");
+    expect(report).not.toContain("secret-token");
+    expect(report).toContain("https://example.invalid/demo/react-style-fixture.git");
+    for (const requirement of ["R1", "R2", "R3", "R4", "R5", "R6"]) {
+      const row = report.split("\n").find((line) => line.startsWith(`| ${requirement} `));
+      expect(row?.split("|").slice(1, -1).every((cell) => cell.trim().length > 0)).toBe(true);
+    }
+    expect(await readFile(path.join(repo, "docs/README.md"), "utf8")).toContain(
+      "00-项目总览",
+    );
+    const evidence = JSON.parse(
+      await readFile(
+        path.join(repo, "docs/07-AI资产/资产复利/验证证据/verification.json"),
+        "utf8",
+      ),
+    ) as { contract: { task21FiveMaterials: boolean; task22CompleteReport: boolean } };
+    expect(evidence.contract.task21FiveMaterials).toBe(true);
+    expect(evidence.contract.task22CompleteReport).toBe(true);
+    for (const directory of [
+      "00-项目总览",
+      "01-业务资产",
+      "02-技术架构",
+      "03-接口资产",
+      "04-数据资产",
+      "05-代码图谱",
+      "06-开发规范",
+      "07-AI资产",
+    ]) {
+      expect(await readFile(path.join(repo, "docs", directory, "README.md"), "utf8")).toContain(
+        `# ${directory}`,
+      );
+    }
+
+    const statusBeforeRepeat = await git(repo, ["status", "--porcelain=v1"]);
+    const repeated = await deliverWorkflow({ cwd: repo, yes: true });
+    expect(repeated.delivery.noOp).toBe(true);
+    expect(await git(repo, ["status", "--porcelain=v1"])).toBe(statusBeforeRepeat);
+    expect(
+      await readFile(
+        path.join(repo, "docs/07-AI资产/资产复利/资产复利实践报告.md"),
+        "utf8",
+      ),
+    ).toBe(report);
+    await git(repo, ["add", "docs"]);
+    await git(repo, ["commit", "-m", "docs: commit generated acceptance package"]);
+    await deliverWorkflow({ cwd: repo, yes: true });
+    expect(await git(repo, ["status", "--porcelain=v1"])).toBe("");
+    expect(
+      await readFile(
+        path.join(repo, "docs/07-AI资产/资产复利/资产复利实践报告.md"),
+        "utf8",
+      ),
+    ).toBe(report);
+
+    const navigation = path.join(repo, "docs/README.md");
+    await writeFile(navigation, `${await readFile(navigation, "utf8")}\n人工修改\n`, "utf8");
+    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
+      "标准 docs 受管文件被人工编辑",
+    );
   });
 });

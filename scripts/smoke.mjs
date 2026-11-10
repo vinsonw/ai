@@ -43,6 +43,9 @@ async function enrich(file) {
         recommendations: ["沉淀为模板并记录适用边界。"],
       },
     };
+    for (const finding of Object.values(item.asset.analysis)) {
+      finding.evidence.unshift(`本资产来源证据：${item.sourceExcerpt.text}`);
+    }
   }
   await writeFile(file, `${JSON.stringify(shard, null, 2)}\n`, "utf8");
 }
