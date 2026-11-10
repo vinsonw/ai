@@ -17,6 +17,7 @@ npx asset-compound start --yes
 `start` 自动：
 
 - 识别当前 Git 根目录和 `main` / `master` / `origin/HEAD` 基线；
+- 在基线分支或 detached HEAD 上立即失败，避免完成分析后才发现无法独立回写；
 - 发现常见 requirement 路径，默认组合为 `requirement + git` 两类真实来源；
 - 将有效 `run.yaml`、session、manifest 和 shards 放入稳定且不污染工作树的 `.git/asset-compound/`；
 - 默认每片一个资产，来源摘录总预算为 12000 字符；
@@ -40,6 +41,8 @@ npx asset-compound deliver --yes
 `docs/` 分类目录和完整 2.2
 报告。任何结构、内容、证据、复盘或防重复门禁失败都会返回非零退出码，不会生成
 “看似成功”的验收结论。
+
+`deliver` 必须显式传入 `--yes`；该确认不是装饰性参数。
 
 > CLI 自身不含模型 API。没有外部 provider 时，语义分析必须由 AI 编辑器或人工完成；`start` 只准备确定性任务队列，不能宣称纯 CLI 自动完成分析。
 

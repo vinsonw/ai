@@ -74,6 +74,16 @@ async function detectBaseBranch(repo: string): Promise<string> {
   }
 }
 
+async function assertIndependentBranch(repo: string, config: RunConfig): Promise<void> {
+  const branch = await git(repo, ["branch", "--show-current"]);
+  const baseBranch = config.baseBranch ?? "main";
+  if (!branch || branch === baseBranch) {
+    throw new Error(
+      `正式工作流必须先切换到独立分支；当前分支为 ${branch || "（分离 HEAD）"}，基线为 ${baseBranch}`,
+    );
+  }
+}
+
 export interface StartWorkflowOptions {
   cwd?: string;
   workspace?: string;
@@ -200,8 +210,10 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     config = options.config
       ? await loadConfig(options.config)
       : await discoverConfig(repo, options);
+    await assertIndependentBranch(repo, config);
     await writeText(configPath, stringifyYaml(config));
   }
+  if (existingManifest) await assertIndependentBranch(repo, config);
   const prepared = await prepareShardPipeline(repo, configPath, shards, {
     maxChars: options.maxChars ?? existingManifest?.maxChars ?? 12_000,
     maxItems: options.maxItems ?? existingManifest?.maxItems ?? 1,
@@ -284,6 +296,9 @@ export interface DeliverWorkflowOptions {
 }
 
 export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
+  if (!options.yes) {
+    throw new Error("deliver 将写入受管 docs；请显式传入 --yes 确认非交互交付");
+  }
   const { repo, gitDir } = await repositoryContext(options.cwd ?? process.cwd());
   const workspace = path.resolve(
     options.workspace ?? path.join(gitDir, "asset-compound"),

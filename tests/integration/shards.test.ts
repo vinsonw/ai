@@ -250,10 +250,14 @@ describe("零配置 start/deliver", () => {
     await git(repo, ["remote", "add", "origin", "https://secret-token@example.invalid/demo/react-style-fixture.git"]);
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-m", "feat: realistic react baseline"]);
+    await expect(startWorkflow({ cwd: repo, yes: true, maxChars: 64 })).rejects.toThrow(
+      "必须先切换到独立分支",
+    );
     await git(repo, ["checkout", "-b", "asset-compounding/zero-config"]);
 
     const started = await startWorkflow({ cwd: repo, yes: true, maxChars: 64 });
     expect(started.mode).toBe("editor-assisted");
+    await expect(deliverWorkflow({ cwd: repo })).rejects.toThrow("--yes");
     expect(started.effectiveConfig).toContain(`${path.sep}.git${path.sep}`);
     expect(await readFile(started.task, "utf8")).toContain("交给任意 AI 编辑器执行");
     const effectiveBefore = await readFile(started.effectiveConfig, "utf8");
