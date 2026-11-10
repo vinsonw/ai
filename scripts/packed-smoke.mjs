@@ -100,7 +100,8 @@ try {
     "utf8",
   );
   await writeFile(path.join(repo, ".gitignore"), "node_modules/\n", "utf8");
-  await run("git", ["init", "-b", "main"]);
+  await run("git", ["init"]);
+  await run("git", ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await run("git", ["config", "user.name", "Packed Smoke"]);
   await run("git", ["config", "user.email", "packed-smoke@example.invalid"]);
   await run("git", [
@@ -164,7 +165,7 @@ try {
   ) {
     throw new Error("packed deliver did not complete or verify zero diff");
   }
-  if (!(await readFile(started.task, "utf8")).includes("任意 AI 编辑器")) {
+  if (!(await readFile(started.task, "utf8")).includes("本轮唯一输入边界")) {
     throw new Error("packed editor task entry is missing");
   }
   if (!(await readFile(skill.skillFile, "utf8")).includes("# 资产复利")) {

@@ -87,6 +87,19 @@ export async function git(repo: string, args: string[]): Promise<string> {
   return stdout.trimEnd();
 }
 
+export async function currentBranch(repo: string): Promise<string> {
+  try {
+    return await git(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  } catch (error) {
+    try {
+      await git(repo, ["rev-parse", "--verify", "HEAD"]);
+      return "";
+    } catch {
+      throw error;
+    }
+  }
+}
+
 export async function assertOutputPath(repo: string, target: string): Promise<string> {
   const root = await realpath(repo);
   const absolute = path.resolve(root, target);
@@ -220,7 +233,7 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
   const output = await git(repo, [
     "log",
     `-${maxCommits}`,
-    "--format=%H%x1f%s%x1f%b%x1f%aI%x00",
+    "--format=%H%x1f%s%x1f%b%x1f%at%x00",
     "--",
     ".",
     `:(exclude)${OUTPUT_ROOT}/**`,
@@ -232,8 +245,8 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
     .map((record) => record.trim())
     .filter(Boolean)
     .map((record) => {
-      const [commit = "", subject = "", body = "", authoredAt = ""] = record.split("\x1f");
-      const content = [subject, body, authoredAt].filter(Boolean).join("\n");
+      const [commit = "", subject = "", body = "", authoredEpoch = ""] = record.split("\x1f");
+      const content = [subject, body, authoredEpoch].filter(Boolean).join("\n");
       return {
         sourceType: "git" as const,
         sourceRef: `git:${commit}`,
@@ -568,7 +581,7 @@ export async function render(
   previous: ReadState | null,
 ): Promise<PipelineResult> {
   const head = await git(repo, ["rev-parse", "HEAD"]);
-  const branch = await git(repo, ["branch", "--show-current"]);
+  const branch = await currentBranch(repo);
   const baseBranch = config.baseBranch ?? "main";
   const baseCommit = await git(repo, ["merge-base", "HEAD", baseBranch]);
   const changedAssets = assets.filter((asset) => asset.writebackKind !== "未变");
@@ -832,7 +845,7 @@ export async function runPipeline(
 ): Promise<PipelineResult> {
   const repo = await realpath(repoInput);
   const config = await loadConfig(configPath);
-  const branch = await git(repo, ["branch", "--show-current"]);
+  const branch = await currentBranch(repo);
   const baseBranch = config.baseBranch ?? "main";
   if (!branch || branch === baseBranch) {
     throw new Error(`写入必须使用独立分支；当前分支为 ${branch || "（分离 HEAD）"}`);

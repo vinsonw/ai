@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   git,
+  currentBranch,
   inspectPipeline,
   loadConfig,
   runPipeline,
@@ -19,7 +20,8 @@ async function createRepository(): Promise<string> {
   const repo = await mkdtemp(path.join(os.tmpdir(), "asset-integration-"));
   temporary.push(repo);
   await cp(fixture, repo, { recursive: true });
-  await git(repo, ["init", "-b", "main"]);
+  await git(repo, ["init"]);
+  await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await git(repo, ["config", "user.name", "Asset Test"]);
   await git(repo, ["config", "user.email", "asset-test@example.invalid"]);
   await git(repo, ["add", "."]);
@@ -40,6 +42,26 @@ describe("incremental pipeline", () => {
     await writeLegacyAssets(target, inspected.assets);
     return target;
   }
+
+  it("detects named and detached HEAD without branch --show-current", async () => {
+    const repo = await createRepository();
+    expect(await currentBranch(repo)).toBe("asset-compounding/test");
+    await git(repo, ["checkout", "--detach", "HEAD"]);
+    expect(await currentBranch(repo)).toBe("");
+  });
+
+  it("uses epoch seconds for stable Git source timestamps", async () => {
+    const repo = await createRepository();
+    const records = await scan(repo, await loadConfig(path.join(repo, "run.yaml")));
+    const gitRecords = records.filter((record) => record.sourceType === "git");
+    expect(gitRecords.length).toBeGreaterThan(0);
+    for (const record of gitRecords) {
+      const commit = record.sourceRef.slice("git:".length);
+      const expected = await git(repo, ["log", "-1", "--format=%at", commit]);
+      expect(record.content.split("\n").at(-1)).toBe(expected);
+      expect(expected).toMatch(/^\d+$/);
+    }
+  });
 
   it("rejects source globs that escape the repository", async () => {
     const repo = await createRepository();

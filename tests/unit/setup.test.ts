@@ -26,15 +26,16 @@ describe("编辑器无关初始化", () => {
 
     expect(result.mode).toBe("generic");
     expect(await readFile(result.config, "utf8")).toContain("baseBranch: develop");
-    expect(await readFile(result.prompt, "utf8")).toContain("四维分析");
-    expect(await readFile(result.protocol, "utf8")).toContain("编辑器无关");
+    expect(await readFile(result.prompt, "utf8")).toContain("唯一输出");
+    expect(await readFile(result.protocol, "utf8")).toContain("第一条 pending shard");
+    expect(await readFile(result.readme, "utf8")).toContain("事实仅来自当前 sourceExcerpt");
     expect(JSON.parse(await readFile(result.outputSchema, "utf8"))).toHaveProperty(
       "$schema",
     );
     expect(JSON.parse(await readFile(result.shardSchema, "utf8"))).toHaveProperty(
       "$schema",
     );
-    expect(await readFile(result.agentsAdapter, "utf8")).toContain("每次只编辑");
+    expect(await readFile(result.agentsAdapter, "utf8")).toContain("第一条 pending shard");
 
     await expect(initGenericWorkspace({ output })).rejects.toThrow("已存在");
     await expect(initGenericWorkspace({ output, force: true })).resolves.toBeDefined();

@@ -12,6 +12,7 @@ import {
   type RetrospectiveInput,
 } from "./acceptance.js";
 import {
+  currentBranch,
   git,
   loadConfig,
   prepareShardPipeline,
@@ -75,7 +76,7 @@ async function detectBaseBranch(repo: string): Promise<string> {
 }
 
 async function assertIndependentBranch(repo: string, config: RunConfig): Promise<void> {
-  const branch = await git(repo, ["branch", "--show-current"]);
+  const branch = await currentBranch(repo);
   const baseBranch = config.baseBranch ?? "main";
   if (!branch || branch === baseBranch) {
     throw new Error(
@@ -152,23 +153,65 @@ async function discoverConfig(
 }
 
 function taskText(session: WorkflowSession): string {
-  return `# 交给任意 AI 编辑器执行
+  return `# AI 小上下文逐片任务
 
-这是 editor-assisted 工作流。CLI 没有模型 API 时不会自动完成语义分析。
+这是 editor-assisted 工作流。CLI 不含模型 API；你必须逐片完成语义分析，不能把
+\`start\` 生成基线误报为分析完成。
 
-1. 打开 \`${session.shards}/manifest.json\`，只处理 status 为 \`pending\` 的分片。
-2. 每次只打开一个 \`${session.shards}/shards/*.json\`。
-3. 只增强 \`items[].asset\`；禁止修改 \`provenance\`、来源摘录元数据、assetId、sourceRevision、contentHash。
-4. 四个分析维度的 evidence、gaps、recommendations 都必须包含具体内容，禁止保留默认占位文本。
-5. 每片完成后执行：
-   \`npx @vinsonw2/asset-compound validate --input <该分片路径>\`
-6. 按真实实践填写 \`${session.retrospective}\` 的四个复盘字段；禁止用推断、空值或占位文本。
-7. 中断后重新执行 \`npx @vinsonw2/asset-compound start --yes\`，只会返回未完成片。
-8. 全部完成后执行 \`npx @vinsonw2/asset-compound deliver --yes\`。
+## 本轮唯一输入边界
 
-可选 provider 自动模式需要显式传入 \`--provider <可执行文件>\`。provider 每次接收
-\`<shard-path> <task-path>\` 两个参数，并须原地更新 shard。凭证只能来自环境变量或系统 secret store，
-不得写入配置、workspace 或仓库。
+1. 先读 \`${session.shards}/manifest.json\`，只选择第一条 \`status=pending\` 的记录。
+2. 本轮只打开该记录指向的一个 \`${session.shards}/shards/NNNN.json\`。
+3. 事实只能来自该片的 \`items[].sourceExcerpt.text\` 和不可变 \`provenance\`。
+4. 禁止同时读取/拼接全部 shards，禁止自行扫描仓库、猜测目录，禁止为补全
+   \`truncated=true\` 的摘录而打开原始全文；缺失信息写入 gaps。
+
+## 唯一输出与 schema
+
+- 唯一输出路径就是当前 shard 原文件；原地写回纯 JSON，不创建说明文件、Markdown
+  围栏或旁路结果，不修改项目源码、原始 docs、配置、manifest 或其他 shard。
+- 只能修改 \`items[].asset\` 的 \`title/summary/facts/decisions/actions/relations/analysis\`。
+- 禁止修改顶层 \`schemaVersion/shardId\`、项数/顺序、\`provenance\`、
+  \`sourceExcerpt\`，以及 asset 的
+  \`assetId/sourceType/sourceRef/sourceRevision/contentHash/writebackKind\`。
+- 当前 shard 结构和 CLI \`validate\` 是唯一 schema 权威；禁止新增字段。
+
+## 每个 asset 的必填内容
+
+- \`title\` 明确命名资产；\`summary\` 至少 20 个字符。
+- \`facts/decisions/actions/relations\` 四个数组必须保留：只写摘录可证明的内容；
+  没有证据时使用空数组，不得编造。
+- \`analysis\` 必须完整包含
+  \`completeness/executability/consistency/reuseValue\`。
+- 前三维 level 仅用 \`ready/partial/missing/conflict\`；复用价值仅用
+  \`high/medium/low\`。
+- 每维的 \`evidence/gaps/recommendations\` 都至少一项、每项至少 4 个字符。
+  evidence 必须引用或紧密复述本片摘录中的具体事实；不能只写来源路径或泛化套话。
+- 无法由摘录证明时降低 level 并写明 gap；禁止推断负责人、时间、接口、数据结构、
+  跨片一致性或任何摘录外事实。发现冲突时用 \`conflict\` 并逐条记录双方证据。
+
+## 完成、失败、重试
+
+1. 保存当前 shard 后只运行：
+   \`npx @vinsonw2/asset-compound validate --input <当前分片绝对路径>\`
+2. exit 0 才表示该片完成；manifest 会记录 completed。失败时根据 stderr 只修当前片，
+   重跑同一命令；不得跳过、手改完成标记或重做已完成片。
+3. 若摘录为空/含敏感信息、不可变字段异常或证据不足以形成实质结论，停止该片并报告
+   具体原因，不能伪造通过结果。
+4. 单片成功后释放其上下文，再从 manifest 取下一条 pending。中断后重新执行
+   \`npx @vinsonw2/asset-compound start --yes\`，只继续 pending shard。
+
+## 最终交付
+
+全部 shard validate 成功后，按真实实践填写 \`${session.retrospective}\` 的
+\`maxHelp/frictionAndTime/coverageGaps/improvements\`；禁止空值、占位文本或推断。
+然后运行 \`npx @vinsonw2/asset-compound deliver --yes\`。只有标准 docs、2.1
+五类材料、2.2 完整报告、R1–R6、V1–V8、冲突门禁和二次 zero diff 全部通过，
+才能宣称完成；任一失败必须保留错误并停止。
+
+可选 provider 自动模式必须由用户显式传入 \`--provider <executable>\`。provider
+每次只接收 \`<shard-path> <task-path>\`，仍须遵守以上边界并原地写回当前 shard。
+凭证只能来自进程环境或系统 secret store，禁止进入参数、输出、workspace 或仓库。
 `;
 }
 
