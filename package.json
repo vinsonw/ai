@@ -18,8 +18,7 @@
     "prompts",
     "protocol",
     "skill",
-    "adapters",
-    "artifacts"
+    "adapters"
   ],
   "exports": {
     ".": {

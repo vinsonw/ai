@@ -20,7 +20,7 @@ describe("中文 CLI", () => {
     expect(result.stdout).toContain("命令：");
     expect(result.stdout).toContain("plan [选项]");
     expect(result.stdout).not.toContain("[options]");
-    expect(result.stdout).toContain("生成可增量、可追溯的资产");
+    expect(result.stdout).toContain("标准 docs 分类目录");
     expect(result.stdout).toContain("prepare");
     expect(result.stdout).toContain("finalize");
     expect(result.stdout).toContain("start");

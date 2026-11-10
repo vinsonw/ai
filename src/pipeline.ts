@@ -33,6 +33,18 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_ROOT = "docs/可读化";
+const STANDARD_DOC_OUTPUTS = [
+  "docs/README.md",
+  "docs/00-项目总览/",
+  "docs/01-业务资产/",
+  "docs/02-技术架构/",
+  "docs/03-接口资产/",
+  "docs/04-数据资产/",
+  "docs/05-代码图谱/",
+  "docs/06-开发规范/",
+  "docs/07-AI资产/",
+  "docs/08-其他上下文/",
+];
 const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
   requirement: "需求",
   design: "设计",
@@ -209,6 +221,11 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
     "log",
     `-${maxCommits}`,
     "--format=%H%x1f%s%x1f%b%x1f%aI%x00",
+    "--",
+    ".",
+    `:(exclude)${OUTPUT_ROOT}/**`,
+    ...STANDARD_DOC_OUTPUTS.map((entry) =>
+      `:(exclude)${entry.endsWith("/") ? `${entry}**` : entry}`),
   ]);
   const records = output
     .split("\0")
@@ -232,6 +249,8 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
 export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[]> {
   const excludes = [
     `${OUTPUT_ROOT}/**`,
+    ...STANDARD_DOC_OUTPUTS.filter((entry) => entry.endsWith("/")).map((entry) => `${entry}**`),
+    "docs/README.md",
     "node_modules/**",
     "dist/**",
     ...(config.exclude ?? []),
@@ -553,6 +572,8 @@ export async function render(
   const baseBranch = config.baseBranch ?? "main";
   const baseCommit = await git(repo, ["merge-base", "HEAD", baseBranch]);
   const changedAssets = assets.filter((asset) => asset.writebackKind !== "未变");
+  const sourceHead =
+    previous && changedAssets.length === 0 ? previous.lastReadCommit : head;
   const conflicts: Conflict[] = [];
   const contentByAsset = new Map<string, string>();
 
@@ -615,7 +636,7 @@ export async function render(
   }
 
   const runId = sha256(
-    `${head}\n${records.map((record) => `${record.sourceRef}:${record.contentHash}`).join("\n")}`,
+    records.map((record) => `${record.sourceRef}:${record.contentHash}`).join("\n"),
   ).slice(7, 23);
   if (!previous) {
     const firstRunManagedPaths = [
@@ -732,11 +753,11 @@ export async function render(
     [`${OUTPUT_ROOT}/evidence/acceptance-report.md`]: await renderAcceptance(
       branch,
       baseCommit,
-      head,
+      sourceHead,
       resultBase,
     ),
     [`${OUTPUT_ROOT}/runs/${runId}.md`]:
-      `# 运行记录 ${runId}\n\n- 当前提交：\`${head}\`\n- 来源数：${records.length}\n- 新增：${resultBase.counts.new}\n- 增量：${resultBase.counts.updated}\n- 未变：${resultBase.counts.unchanged}\n- 冲突：${conflicts.length}\n`,
+      `# 运行记录 ${runId}\n\n- 来源提交：\`${sourceHead}\`\n- 来源数：${records.length}\n- 新增：${resultBase.counts.new}\n- 增量：${resultBase.counts.updated}\n- 未变：${resultBase.counts.unchanged}\n- 冲突：${conflicts.length}\n`,
     [`${OUTPUT_ROOT}/state/asset-index.jsonl`]:
       `${assets.map((asset) => JSON.stringify(asset)).join("\n")}\n`,
   };
@@ -754,7 +775,7 @@ export async function render(
     selfHash: "",
     baseBranch,
     baseCommit: previous?.baseCommit ?? baseCommit,
-    lastReadCommit: head,
+    lastReadCommit: sourceHead,
     sources,
     assets: stateAssets,
     managedFiles,
@@ -786,12 +807,22 @@ export async function verifyGitScope(repo: string): Promise<string[]> {
     }
   }
   const outside = paths.filter(
-    (file) => file !== OUTPUT_ROOT && !file.startsWith(`${OUTPUT_ROOT}/`),
+    (file) =>
+      file !== OUTPUT_ROOT &&
+      !file.startsWith(`${OUTPUT_ROOT}/`) &&
+      !isStandardManagedOutput(file),
   );
   if (outside.length) {
     throw new Error(`检测到 ${OUTPUT_ROOT} 之外的改动：${outside.join("、")}`);
   }
   return paths.sort();
+}
+
+function isStandardManagedOutput(file: string): boolean {
+  if (file === "docs/README.md") return true;
+  if (/^docs\/(?:0[0-7]-[^/]+)\/README\.md$/u.test(file)) return true;
+  if (/^docs\/(?:0[1-7]-[^/]+)\/[0-9a-f]{64}\.md$/u.test(file)) return true;
+  return /^docs\/07-AI资产\/资产复利\/(?:资产复利实践报告\.md|提取源清单\.md|回写记录\.md|冲突报告\.md|state\.json|验证证据\/(?:verification\.json|directory-tree\.txt))$/u.test(file);
 }
 
 export async function runPipeline(

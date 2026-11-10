@@ -1,6 +1,7 @@
 # @vinsonw2/asset-compound
 
-编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，沉淀为 `docs/可读化/**` 下可增量、可追溯、可验收的资产。
+编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，按标准
+`docs/` 分类目录沉淀为可增量、可追溯、可验收的资产。
 
 当前源码版本为 `0.1.2`（下一补丁版本候选，先通过 PR 评审，不在本次工作中发布）。
 
@@ -16,10 +17,12 @@ npx asset-compound start --yes
 `start` 自动：
 
 - 识别当前 Git 根目录和 `main` / `master` / `origin/HEAD` 基线；
+- 在基线分支或 detached HEAD 上立即失败，避免完成分析后才发现无法独立回写；
 - 发现常见 requirement 路径，默认组合为 `requirement + git` 两类真实来源；
 - 将有效 `run.yaml`、session、manifest 和 shards 放入稳定且不污染工作树的 `.git/asset-compound/`；
 - 默认每片一个资产，来源摘录总预算为 12000 字符；
-- 生成 `.git/asset-compound/AI-TASK.md`，作为“交给任意 AI 编辑器执行”的短入口。
+- 生成 `.git/asset-compound/AI-TASK.md` 和 `retrospective.json`，作为“交给任意
+  AI 编辑器执行”的小上下文入口。
 
 让任意 AI 编辑器打开 `AI-TASK.md`，逐个处理 pending shard。每片完成后：
 
@@ -33,9 +36,46 @@ npx asset-compound validate --input .git/asset-compound/work/shards/0001.json
 npx asset-compound deliver --yes
 ```
 
-`deliver` 自动聚合所有分片，核对全量来源一一对应、重复、顺序、provenance 和实质分析质量，写入 `docs/可读化/**`，并执行第二次运行零差异验证。
+`deliver` 自动聚合所有分片，核对全量来源一一对应、重复、顺序、provenance 和
+逐维 evidence 与本片来源的具体关联，执行第二次运行零差异验证，再生成标准
+`docs/` 分类目录和完整 2.2
+报告。任何结构、内容、证据、复盘或防重复门禁失败都会返回非零退出码，不会生成
+“看似成功”的验收结论。
+
+`deliver` 必须显式传入 `--yes`；该确认不是装饰性参数。
 
 > CLI 自身不含模型 API。没有外部 provider 时，语义分析必须由 AI 编辑器或人工完成；`start` 只准备确定性任务队列，不能宣称纯 CLI 自动完成分析。
+
+## 强制交付契约
+
+`deliver --yes` 成功必须同时满足 1.1、2.1、2.2、R1–R6 和 V1–V8：
+
+```text
+docs/
+├── README.md
+├── 00-项目总览/
+├── 01-业务资产/
+├── 02-技术架构/
+├── 03-接口资产/
+├── 04-数据资产/
+├── 05-代码图谱/
+├── 06-开发规范/
+└── 07-AI资产/
+    └── 资产复利/
+        ├── 资产复利实践报告.md
+        ├── 提取源清单.md
+        ├── 回写记录.md
+        ├── 冲突报告.md
+        ├── state.json
+        └── 验证证据/
+```
+
+`docs/README.md` 是分类导航。2.1 五类材料必须全部存在：完整 2.2 报告、至少两种
+真实数据源的提取源清单、逐资产四维分析、回写结果、R1–R6/V1–V8 验证证据。
+
+2.2 报告必须完整包含：基本信息、R1–R6 环节对照、提取源清单、四维分析、回写
+记录、防重复验证和复盘。AI 或实践人必须按真实情况填写
+`.git/asset-compound/retrospective.json`；空值、占位文本或推断值会使交付失败。
 
 ## 已发布包用法
 
@@ -81,8 +121,9 @@ npx asset-compound start \
 自动生成或高级覆盖后的有效配置会写入：
 
 - workspace：`.git/asset-compound/run.yaml`
-- 验收证据：`docs/可读化/evidence/effective-config.yaml`
-- 来源证据：`docs/可读化/source-manifest.yaml`
+- 底层机器证据：`docs/可读化/evidence/effective-config.yaml`
+- 底层来源 manifest：`docs/可读化/source-manifest.yaml`
+- 标准验收入口：`docs/07-AI资产/资产复利/资产复利实践报告.md`
 
 ## 小上下文分片契约
 
@@ -199,15 +240,19 @@ npx asset-compound finalize \
 ## 安全边界
 
 - 至少两种真实非空来源；自动模式默认 `requirement + git`。
-- 只写目标仓库 `docs/可读化/**`；workspace 位于 `.git/asset-compound/`。
+- 只写目标仓库的受管标准 `docs/` 分类目录和底层 `docs/可读化/**` 机器状态；
+  workspace 位于 `.git/asset-compound/`。
 - 拒绝 provenance 篡改、重复/缺失资产、路径逃逸、输出符号链接和人工编辑静默覆盖。
-- fixture 只验证工具，不得作为真实验收数据。
+- fixture 只验证工具，不得作为真实验收数据；存在根级
+  `NOT-ACCEPTANCE-DATA.md` 标记时正式工作流直接失败。
 - CLI 不创建业务分支、不 commit、不 push、不创建 PR。
 - scan 原文和模型凭证不得进入仓库、日志或配置。
 
 ## npm 包内容
 
-tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、`prompts/`、`protocol/`、可选 Cursor Skill 和 `artifacts/`。
+tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、`prompts/`、`protocol/`
+和可选 Cursor Skill。使用 `npm pack` 生成的当前版本 tgz 即可在外部 React 仓库
+本地安装；npm 包不再递归携带历史版本 tarball。
 
 ESM：
 
@@ -220,7 +265,8 @@ import {
 } from "@vinsonw2/asset-compound";
 ```
 
-`artifacts/asset-compound-0.1.0.tgz` 仍是 npm 官方 registry 发布的历史 `0.1.0` 原始 tarball，其 SHA-256 记录在 `artifacts/SHA256SUMS`；不得用本次未发布的 `0.1.2` 覆盖它。
+仓库中的 `artifacts/asset-compound-0.1.0.tgz` 仅保留为历史归档，不属于当前 npm
+包内容，也不得作为当前验收工作流使用。
 
 ## 开发与发布检查
 

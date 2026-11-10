@@ -1,6 +1,6 @@
 ---
 name: asset-compounding
-description: 在当前 Git 项目启动小上下文资产复利队列，逐片分析并交付 docs/可读化 验收目录。
+description: 在当前 Git 项目启动小上下文资产复利队列，逐片分析并交付标准 docs 分类目录和完整验收报告。
 ---
 
 # 资产复利：小上下文逐片工作流
@@ -17,8 +17,9 @@ description: 在当前 Git 项目启动小上下文资产复利队列，逐片�
 4. 禁止修改 provenance、sourceExcerpt 元数据、稳定 ID/hash/revision、项数和顺序。
 5. 每片保存后立即运行 `npx @vinsonw2/asset-compound validate --input <shard>`。
 6. 单片失败只修复该片；中断后再次运行 `start --yes`，跳过 completed 片。
-7. 所有片完成后运行 `npx @vinsonw2/asset-compound deliver --yes`。
-8. 保存 delivery 和 `secondRunZeroDiff` 证据；仅提交 `docs/可读化/**`。
+7. 按真实实践填写返回的 `retrospective` 文件；禁止空值、占位文本或推断内容。
+8. 所有片完成后运行 `npx @vinsonw2/asset-compound deliver --yes`。
+9. 保存 delivery 和 `secondRunZeroDiff` 证据；仅提交受管的标准 `docs/**`。
 
 不要把全部 shard 同时加载到上下文。不要为了“完整”而读取被截断来源的全量正文；缺失信息写入 gaps。
 
@@ -49,11 +50,13 @@ description: 在当前 Git 项目启动小上下文资产复利队列，逐片�
 ## 安全与验收
 
 - 至少两类真实非空来源；fixture 不能作为验收数据。
-- CLI 只写 `docs/可读化/**`，并拒绝独立分支之外的交付。
+- CLI 只写标准 `docs/README.md`、`00-项目总览` 至 `07-AI资产` 分类目录以及
+  `docs/可读化/**` 底层机器状态，并拒绝独立分支之外的交付。
 - completed shard 的 hash 变化、provenance 篡改、重复或缺失资产都会阻止 finalize。
 - 自动有效配置写入 `evidence/effective-config.yaml`，来源写入 `source-manifest.yaml`。
 - 人工编辑受管输出时禁止静默覆盖，必须生成冲突报告。
-- 最终必须有完整 R1–R6 / V1–V8 目录和二次 zero diff。
+- 最终必须同时满足 1.1 标准 docs、2.1 五类材料、2.2 完整报告、R1–R6 /
+  V1–V8 和二次 zero diff；任一门禁失败必须停止，不能宣称验收成功。
 
 ## 旧流程
 

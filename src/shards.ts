@@ -341,8 +341,34 @@ function assertShard(
       throw new Error(`分片资产包含敏感数据：${item.asset.assetId}`);
     }
     assertSubstantiveAsset(item.asset);
+    const sourceTokens = groundingTokens(excerpt.text);
+    if (sourceTokens.length < 2) {
+      throw new Error(`资产 ${item.asset.assetId} 的来源摘录缺少可核验的实质内容`);
+    }
+    for (const [dimension, finding] of Object.entries(item.asset.analysis)) {
+      const evidence = finding.evidence.join(" ").toLowerCase();
+      const matched = sourceTokens.filter((token) => evidence.includes(token));
+      if (matched.length < Math.min(2, sourceTokens.length)) {
+        throw new Error(
+          `资产 ${item.asset.assetId} 的 ${dimension} 证据未与本片来源内容具体关联`,
+        );
+      }
+    }
     return item.asset;
   });
+}
+
+function groundingTokens(value: string): string[] {
+  const tokens = new Set<string>();
+  const stop = new Set(["需要", "必须", "支持", "明确", "需求", "来源", "内容", "验证"]);
+  for (const word of value.toLowerCase().match(/[a-z0-9_-]{4,}/g) ?? []) tokens.add(word);
+  for (const sequence of value.match(/\p{Script=Han}{2,}/gu) ?? []) {
+    for (let index = 0; index < sequence.length - 1; index += 1) {
+      const token = sequence.slice(index, index + 2);
+      if (!stop.has(token)) tokens.add(token);
+    }
+  }
+  return [...tokens];
 }
 
 async function validateEntry(

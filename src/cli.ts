@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   };
   const program = new Command()
     .name("asset-compound")
-    .description("在 docs/可读化 下生成可增量、可追溯的资产")
+    .description("生成标准 docs 分类目录和可增量、可追溯的验收资产")
     .usage("[选项] <命令>")
     .version("0.1.2", "-V, --version", "显示版本")
     .helpOption("-h, --help", "显示帮助")
@@ -251,7 +251,7 @@ async function main(): Promise<void> {
 
   program
     .command("verify")
-    .description("验证工作树改动仅位于 docs/可读化")
+    .description("验证工作树改动仅位于受管 docs 目录")
     .requiredOption("--repo <path>", "目标 Git 仓库")
     .option("--config <path>", "同时证明无变化二次运行")
     .action(async (options: Pick<CommonOptions, "repo"> & { config?: string }) => {

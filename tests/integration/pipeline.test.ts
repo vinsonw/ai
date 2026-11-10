@@ -8,6 +8,7 @@ import {
   loadConfig,
   runPipeline,
   scan,
+  verifyGitScope,
 } from "../../src/pipeline.js";
 import { writeLegacyAssets } from "../helpers.js";
 
@@ -101,7 +102,7 @@ sourceSets:
     expect(runRecordPath).toBeDefined();
     const runRecord = await readFile(path.join(repo, runRecordPath!), "utf8");
 
-    expect(report).toContain("资产复利验收报告");
+    expect(report).toContain("非 2.2 验收报告");
     expect(report).toContain("R1–R6");
     expect(report).toContain("V1–V8");
     expect(index).toContain("资产复利索引");
@@ -112,7 +113,14 @@ sourceSets:
     expect(firstAsset).toContain("内容指纹（contentHash）");
     expect(firstAsset).not.toMatch(/### 完整性：(ready|partial|missing|conflict)/);
     expect(runRecord).toContain("# 运行记录");
-    expect(runRecord).toContain("- 当前提交：");
+    expect(runRecord).toContain("- 来源提交：");
+  });
+
+  it("rejects unrelated changes hidden inside standard docs categories", async () => {
+    const repo = await createRepository();
+    await mkdir(path.join(repo, "docs/08-其他上下文"), { recursive: true });
+    await writeFile(path.join(repo, "docs/08-其他上下文/manual.md"), "# Manual\n", "utf8");
+    await expect(verifyGitScope(repo)).rejects.toThrow("之外的改动");
   });
 
   it("detects manual edits instead of overwriting them", async () => {
