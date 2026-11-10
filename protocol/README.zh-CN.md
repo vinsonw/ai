@@ -39,7 +39,11 @@ npx @vinsonw2/asset-compound deliver --yes
 - 唯一输出是原地覆盖当前 shard 的纯 JSON，只能修改 `items[].asset` 语义字段；
   禁止改源码、原始 docs、manifest、配置或其他 shard。
 - `maxChars` 是每片来源摘录总字符预算，`maxItems` 是每片最大资产数。
-- 超长单资产采用确定性首尾摘录，不把完整 2000+ 行材料塞入上下文。
+- Git 历史按 commit 的变更文件拆成资产，摘录包含结构化
+  `GIT_COMMIT/GIT_FILE/GIT_STATUS`、文件级 patch/hunk 和受控的变更后源码片段；
+  不向模型灌入全仓或完整大文件。
+- 超长单资产采用确定性、按完整行且保留 Git hunk 定位的首尾摘录，不把完整
+  2000+ 行材料塞入上下文。
 - validate 成功后才原子更新完成标记和分片 hash。
 - resume 只返回未完成片；完成片被修改后会拒绝继续。
 - deliver 要求全量一一对应、无重复、顺序稳定、所有片已完成。
@@ -55,6 +59,10 @@ schema 通过只是第一层。每条资产还必须通过质量门禁：
 - 前三维 level 仅用 `ready/partial/missing/conflict`，复用价值仅用 `high/medium/low`；
 - 不保留默认占位结论；
 - `ready/high` 必须有来源路径之外的具体证据。
+
+Git 片必须先读 diff，再逐个 `@@ ... @@` hunk 提炼。提交消息只能作意图线索；
+evidence 必须包含 `文件路径@commit + @@ hunk 定位`。patch 截断时把未覆盖范围
+写入 gaps，不得打开全仓或完整大文件补齐，也不得推断 diff 外事实。
 
 ## Editor-assisted 与 provider
 

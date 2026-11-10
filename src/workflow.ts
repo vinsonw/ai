@@ -166,6 +166,16 @@ function taskText(session: WorkflowSession): string {
 4. 禁止同时读取/拼接全部 shards，禁止自行扫描仓库、猜测目录，禁止为补全
    \`truncated=true\` 的摘录而打开原始全文；缺失信息写入 gaps。
 
+## Git diff 证据（仅适用于 sourceType=git）
+
+1. 先读 diff：按 \`GIT_COMMIT/GIT_FILE/GIT_STATUS\` 确认边界，再逐个阅读
+   \`PATCH_BEGIN…PATCH_END\` 中可见的 \`@@ ... @@\` hunk；提交消息只作意图线索，
+   不能替代代码证据。
+2. Git 资产的 evidence 必须写出 \`文件路径@commit + @@ hunk 定位\` 并引用该
+   hunk 的实际变更；\`POST_IMAGE_BEGIN path@commit:Lx-Ly\` 只能补充变更后局部语境。
+3. 遇到 \`PATCH_TRUNCATED/PATCH_CAPTURE_TRUNCATED\` 必须在 gaps 明确未覆盖内容；
+   禁止打开全仓或完整大文件补齐，禁止推断未显示的调用方、运行结果或业务结论。
+
 ## 唯一输出与 schema
 
 - 唯一输出路径就是当前 shard 原文件；原地写回纯 JSON，不创建说明文件、Markdown

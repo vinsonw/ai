@@ -5,6 +5,15 @@
 复制或拼接全部 shards，不要自行扫描仓库或猜测来源目录；`truncated=true` 时也
 不得打开原始全文，缺失信息写入 gaps。
 
+## Git diff 证据（仅适用于 sourceType=git）
+
+先读 diff：先用 `GIT_COMMIT/GIT_FILE/GIT_STATUS` 确认单文件边界，再逐个阅读
+`PATCH_BEGIN…PATCH_END` 内可见的 `@@ ... @@` hunk。提交消息只能提示意图，
+不能替代代码证据。Git evidence 必须包含 `文件路径@commit + @@ hunk 定位` 并
+引用实际变更；`POST_IMAGE_BEGIN path@commit:Lx-Ly` 只能补充变更后局部语境。
+出现 `PATCH_TRUNCATED/PATCH_CAPTURE_TRUNCATED` 时必须在 gaps 写明未覆盖内容；
+禁止打开全仓或完整大文件补齐，禁止推断未显示的调用方、运行结果或业务结论。
+
 ## 唯一输出与 schema
 
 唯一输出是原地覆盖当前 shard 的纯 JSON。不得创建旁路文件、Markdown 围栏或解释
