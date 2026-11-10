@@ -1,8 +1,10 @@
 {
-  "name": "@vinsonw/asset-compounding-cli",
+  "name": "asset-compound",
   "version": "0.1.0",
-  "description": "Deterministic asset compounding pipeline for Cursor Skills",
+  "description": "Editor-neutral CLI and protocol for incremental, traceable documentation assets",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
   "engines": {
     "node": ">=20"
   },
@@ -13,22 +15,52 @@
     "dist",
     "schemas",
     "templates",
+    "prompts",
+    "protocol",
     "skill"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schemas/*": "./schemas/*",
+    "./templates/*": "./templates/*",
+    "./prompts/*": "./prompts/*",
+    "./protocol/*": "./protocol/*",
+    "./cursor-skill": "./skill/asset-compounding/SKILL.md",
+    "./package.json": "./package.json"
+  },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "smoke:packed": "node scripts/packed-smoke.mjs",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "prepack": "npm run check"
   },
   "keywords": [
-    "cursor-skill",
+    "ai-editor",
     "documentation",
-    "incremental"
+    "incremental",
+    "knowledge-management",
+    "cli"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinsonw/ai.git"
+  },
+  "homepage": "https://github.com/vinsonw/ai#readme",
+  "bugs": {
+    "url": "https://github.com/vinsonw/ai/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "license": "MIT",
   "packageManager": "pnpm@10.33.4",
   "dependencies": {

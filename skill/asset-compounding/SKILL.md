@@ -5,7 +5,9 @@ description: 读取至少两类真实来源，提取可追溯资产，执行四�
 
 # 资产复利
 
-当真实项目需要把需求、设计、AI 产物和 Git 历史沉淀为可复用、可增量、可审计的文档资产时，使用此 Skill。
+这是 `asset-compound` npm 包的**可选 Cursor 适配器**。核心 CLI、schema、templates、prompts 和通用 protocol 不依赖 Cursor。任意 AI 编辑器应使用 `npx asset-compound init` 生成的编辑器无关文件协议；本项目不假装存在跨编辑器统一 Skill 标准。
+
+当 Cursor 中的真实项目需要把需求、设计、AI 产物和 Git 历史沉淀为可复用、可增量、可审计的文档资产时，使用此适配器。
 
 ## 前置条件
 
@@ -16,13 +18,13 @@ description: 读取至少两类真实来源，提取可追溯资产，执行四�
 
 ## 执行流程
 
-1. 运行 `asset-compound plan --repo <仓库> --config <run.yaml>`。
-2. 运行 `asset-compound scan`，检查每个来源路径和 revision。
-3. 运行 `asset-compound prepare ... > prepared.json`。需要业务判断时补充严格 JSON；不得修改 ID、hash 和来源追踪字段。
+1. 运行 `npx asset-compound plan --repo <仓库> --config <run.yaml>`。
+2. 运行 `npx asset-compound scan`，检查每个来源路径和 revision。
+3. 运行 `npx asset-compound prepare ... > prepared.json`。需要业务判断时补充严格 JSON；不得修改 ID、hash 和来源追踪字段。
 4. 确保每条资产分别包含完整性、可执行性、一致性、复用价值四项结论，每项均有证据、缺口和建议。
-5. 运行 `asset-compound validate --input enriched.json`。预览写入集合；只有全部路径都位于 `docs/可读化/**` 时，才运行 `asset-compound render ... --assets enriched.json`。
-6. 运行 `asset-compound verify --repo <仓库> --config <run.yaml>`，保存其中的 `secondRunZeroDiff` JSON 作为 V6 证据。
-7. 运行 `asset-compound finalize`，保存验收报告。
+5. 运行 `npx asset-compound validate --input enriched.json`。预览写入集合；只有全部路径都位于 `docs/可读化/**` 时，才运行 `npx asset-compound render ... --assets enriched.json`。
+6. 运行 `npx asset-compound verify --repo <仓库> --config <run.yaml>`，保存其中的 `secondRunZeroDiff` JSON 作为 V6 证据。
+7. 运行 `npx asset-compound finalize`，保存验收报告。
 8. 在独立分支提交；禁止直接推送基线分支。
 9. 使用完全相同的输入执行第二次运行，要求业务产物零 diff，且 `new=0 updated=0`。
 10. 如需证明受控增量，只能使用一份已批准的真实来源变更，并证明仅对应资产发生增量。
