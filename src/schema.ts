@@ -10,9 +10,13 @@ const dimension = {
     level: {
       enum: ["ready", "partial", "missing", "conflict", "high", "medium", "low"],
     },
-    evidence: { type: "array", items: { type: "string" } },
-    gaps: { type: "array", items: { type: "string" } },
-    recommendations: { type: "array", items: { type: "string" } },
+    evidence: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    gaps: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    recommendations: {
+      type: "array",
+      minItems: 1,
+      items: { type: "string", minLength: 1 },
+    },
   },
 } as const;
 

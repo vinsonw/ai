@@ -31,6 +31,10 @@ describe("编辑器无关初始化", () => {
     expect(JSON.parse(await readFile(result.outputSchema, "utf8"))).toHaveProperty(
       "$schema",
     );
+    expect(JSON.parse(await readFile(result.shardSchema, "utf8"))).toHaveProperty(
+      "$schema",
+    );
+    expect(await readFile(result.agentsAdapter, "utf8")).toContain("每次只编辑");
 
     await expect(initGenericWorkspace({ output })).rejects.toThrow("已存在");
     await expect(initGenericWorkspace({ output, force: true })).resolves.toBeDefined();

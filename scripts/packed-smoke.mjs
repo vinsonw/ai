@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -7,12 +13,11 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const root = process.cwd();
 const sandbox = await mkdtemp(path.join(os.tmpdir(), "asset-packed-smoke-"));
-const repo = path.join(sandbox, "project");
-const workspace = path.join(sandbox, "workspace");
+const repo = path.join(sandbox, "react-project");
 const home = path.join(sandbox, "home");
 let tarball;
 
-async function run(command, args, cwd = sandbox) {
+async function run(command, args, cwd = repo) {
   return exec(command, args, {
     cwd,
     encoding: "utf8",
@@ -25,12 +30,42 @@ async function run(command, args, cwd = sandbox) {
   });
 }
 
-async function npx(args) {
-  return run(
-    "npx",
-    ["--yes", "--package", tarball, "asset-compound", ...args],
-    sandbox,
-  );
+async function cli(args) {
+  return run("npx", ["--no-install", "asset-compound", ...args]);
+}
+
+async function enrich(file) {
+  const shard = JSON.parse(await readFile(file, "utf8"));
+  for (const item of shard.items) {
+    item.asset.summary += " 本结论由 packed smoke 模拟 AI 逐片增强并完成质量核验。";
+    item.asset.analysis = {
+      completeness: {
+        level: "partial",
+        evidence: ["来源摘录明确给出目标、范围和至少一项约束。"],
+        gaps: ["异常路径的完整边界仍需材料负责人最终确认。"],
+        recommendations: ["补充异常场景清单并关联验收用例。"],
+      },
+      executability: {
+        level: "partial",
+        evidence: ["来源摘录包含可执行动作和预期业务结果。"],
+        gaps: ["负责人和完成日期尚未在来源中统一确认。"],
+        recommendations: ["补充负责人、前置条件和完成定义。"],
+      },
+      consistency: {
+        level: "partial",
+        evidence: ["结论已按来源版本和内容指纹进行定位。"],
+        gaps: ["仍需与其他分片中的相关决策进行最终比对。"],
+        recommendations: ["聚合后执行跨资产冲突检查并记录结果。"],
+      },
+      reuseValue: {
+        level: "medium",
+        evidence: ["材料包含可提炼为检查项的稳定业务规则。"],
+        gaps: ["复用范围和不适用条件仍需进一步明确。"],
+        recommendations: ["将稳定规则沉淀为模板并记录适用边界。"],
+      },
+    };
+  }
+  await writeFile(file, `${JSON.stringify(shard, null, 2)}\n`, "utf8");
 }
 
 try {
@@ -40,128 +75,82 @@ try {
         cwd: root,
         encoding: "utf8",
       })
-    )
-      .stdout,
+    ).stdout,
   );
   tarball = path.join(root, packed[0].filename);
 
   await cp(path.join(root, "tests/fixtures/sample-project"), repo, {
     recursive: true,
   });
-  await run("git", ["init", "-b", "main"], repo);
-  await run("git", ["config", "user.name", "Packed Smoke"], repo);
-  await run(
-    "git",
-    ["config", "user.email", "packed-smoke@example.invalid"],
-    repo,
+  await rm(path.join(repo, "run.yaml"), { force: true });
+  await writeFile(
+    path.join(repo, "package.json"),
+    `${JSON.stringify({ name: "packed-react-fixture", private: true }, null, 2)}\n`,
+    "utf8",
   );
-  await run("git", ["add", "."], repo);
-  await run("git", ["commit", "-m", "fixture: packed smoke baseline"], repo);
-  await run("git", ["checkout", "-b", "asset-compounding/packed-smoke"], repo);
+  await writeFile(path.join(repo, ".gitignore"), "node_modules/\n", "utf8");
+  await run("git", ["init", "-b", "main"]);
+  await run("git", ["config", "user.name", "Packed Smoke"]);
+  await run("git", ["config", "user.email", "packed-smoke@example.invalid"]);
+  await run("git", ["add", "."]);
+  await run("git", ["commit", "-m", "fixture: realistic React baseline"]);
+  await run("git", ["checkout", "-b", "asset-compounding/packed-smoke"]);
 
-  const initResult = JSON.parse(
-    (
-      await npx([
-        "init",
-        "--output",
-        workspace,
-        "--base-branch",
-        "main",
-      ])
-    ).stdout,
-  );
-  const config = initResult.config;
-  const prepared = path.join(workspace, "prepared.json");
-  const enriched = path.join(workspace, "enriched.json");
-
-  await npx(["plan", "--repo", repo, "--config", config]);
-  await npx(["scan", "--repo", repo, "--config", config]);
-  const prepareResult = await npx([
-    "prepare",
-    "--repo",
-    repo,
-    "--config",
-    config,
+  await run("npm", [
+    "install",
+    "--no-save",
+    "--package-lock=false",
+    tarball,
   ]);
-  await writeFile(prepared, prepareResult.stdout, "utf8");
-  await writeFile(enriched, prepareResult.stdout, "utf8");
-  await npx(["validate", "--input", enriched]);
 
-  const first = JSON.parse(
-    (
-      await npx([
-        "finalize",
-        "--repo",
-        repo,
-        "--config",
-        config,
-        "--assets",
-        enriched,
-      ])
-    ).stdout,
+  const started = JSON.parse(
+    (await cli(["start", "--yes", "--max-chars", "64"])).stdout,
   );
-  const statusAfterFirst = (await run("git", ["status", "--porcelain=v1"], repo))
-    .stdout;
-  const verification = JSON.parse(
-    (await npx(["verify", "--repo", repo, "--config", config])).stdout,
-  );
-  const second = JSON.parse(
-    (
-      await npx([
-        "run",
-        "--repo",
-        repo,
-        "--config",
-        config,
-        "--assets",
-        enriched,
-      ])
-    ).stdout,
-  );
-  const statusAfterSecond = (
-    await run("git", ["status", "--porcelain=v1"], repo)
-  ).stdout;
-
+  for (const shard of started.pendingShards) {
+    await enrich(shard);
+    await cli(["validate", "--input", shard]);
+  }
+  const resumed = JSON.parse((await cli(["start", "--yes"])).stdout);
+  const delivered = JSON.parse((await cli(["deliver", "--yes"])).stdout);
   const skill = JSON.parse(
-    (await npx(["install-skill", "--editor", "cursor"])).stdout,
+    (
+      await cli([
+        "install-skill",
+        "--editor",
+        "cursor",
+        "--target",
+        path.join(home, "cursor-skill"),
+      ])
+    ).stdout,
   );
-  const protocol = await readFile(initResult.protocol, "utf8");
-  const prompt = await readFile(initResult.prompt, "utf8");
-  const skillText = await readFile(skill.skillFile, "utf8");
 
-  if (first.counts.new < 2 || first.changedFiles.length === 0) {
-    throw new Error("packed first run did not produce assets");
+  if (resumed.pendingShards.length !== 0 || resumed.completedAssets < 2) {
+    throw new Error("packed resume did not preserve completed shard markers");
   }
   if (
-    !verification.secondRunZeroDiff ||
-    !second.noOp ||
-    !second.secondRunZeroDiff ||
-    second.counts.new !== 0 ||
-    second.counts.updated !== 0
+    delivered.delivery.counts.new < 2 ||
+    !delivered.verification.secondRunZeroDiff
   ) {
-    throw new Error("packed second run was not a no-op");
+    throw new Error("packed deliver did not complete or verify zero diff");
   }
-  if (statusAfterFirst !== statusAfterSecond) {
-    throw new Error("packed second run changed the worktree");
+  if (!(await readFile(started.task, "utf8")).includes("任意 AI 编辑器")) {
+    throw new Error("packed editor task entry is missing");
   }
-  if (
-    !protocol.includes("编辑器无关") ||
-    !prompt.includes("四维分析") ||
-    !skillText.includes("# 资产复利")
-  ) {
-    throw new Error("packed resources are incomplete");
+  if (!(await readFile(skill.skillFile, "utf8")).includes("# 资产复利")) {
+    throw new Error("packed Cursor adapter is incomplete");
   }
 
   process.stdout.write(
     `${JSON.stringify(
       {
         package: "@vinsonw2/asset-compound",
-        source: "npm pack tarball",
-        npxOnly: true,
-        genericInit: true,
+        source: "locally installed npm pack tarball",
+        manualYaml: false,
+        environmentVariables: false,
+        commands: ["asset-compound start --yes", "asset-compound deliver --yes"],
+        shardedResume: true,
         cursorAdapter: true,
-        first: first.counts,
-        second: second.counts,
+        first: delivered.delivery.counts,
         secondRunZeroDiff: true,
       },
       null,

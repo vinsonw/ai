@@ -4,9 +4,11 @@ export {
   git,
   inspectPipeline,
   loadAssetsFile,
+  loadAssetsInput,
   loadConfig,
   plan,
   prepare,
+  prepareShardPipeline,
   redactSensitive,
   render,
   renderAsset,
@@ -16,6 +18,14 @@ export {
   verifyGitScope,
   verifySecondRun,
 } from "./pipeline.js";
+export {
+  inputIsDirectory,
+  loadShardedDirectory,
+  prepareShards,
+  validateShardedInput,
+} from "./shards.js";
+export { assertSubstantiveAsset } from "./quality.js";
+export { deliverWorkflow, startWorkflow } from "./workflow.js";
 export {
   assertValid,
   assetSchema,
@@ -30,6 +40,7 @@ export {
 export type {
   AssetRecord,
   AssetState,
+  AssetShard,
   ChangeKind,
   Conflict,
   DimensionFinding,
@@ -37,6 +48,11 @@ export type {
   ReadState,
   RunConfig,
   ScanRecord,
+  ShardExcerpt,
+  ShardItem,
+  ShardManifest,
+  ShardManifestEntry,
+  ShardProvenance,
   SourceSet,
   SourceState,
   SourceType,
@@ -45,3 +61,7 @@ export type {
   InitOptions,
   InstallSkillOptions,
 } from "./setup.js";
+export type {
+  DeliverWorkflowOptions,
+  StartWorkflowOptions,
+} from "./workflow.js";

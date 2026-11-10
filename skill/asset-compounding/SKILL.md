@@ -1,65 +1,60 @@
 ---
 name: asset-compounding
-description: 读取至少两类真实来源，提取可追溯资产，执行四维分析，并仅向 docs/可读化 增量回写。
+description: 在当前 Git 项目启动小上下文资产复利队列，逐片分析并交付 docs/可读化 验收目录。
 ---
 
-# 资产复利
+# 资产复利：小上下文逐片工作流
 
-这是 `@vinsonw2/asset-compound` npm 包的**可选 Cursor 适配器**。核心 CLI、schema、templates、prompts 和通用 protocol 不依赖 Cursor。任意 AI 编辑器应使用 `npx @vinsonw2/asset-compound init` 生成的编辑器无关文件协议；本项目不假装存在跨编辑器统一 Skill 标准。
+这是 `@vinsonw2/asset-compound` 的可选 Cursor 适配器。核心协议不依赖 Cursor。
 
-当 Cursor 中的真实项目需要把需求、设计、AI 产物和 Git 历史沉淀为可复用、可增量、可审计的文档资产时，使用此适配器。
+## 单次触发目标
 
-## 前置条件
+当用户要求执行资产复利时：
 
-1. 确认目标仓库、基线分支和允许读取的来源 glob。
-2. 至少提供两种不同类型、真实、非空且有业务意义的来源；fixture 和空 API 不能作为验收数据。
-3. CLI 工具包必须放在目标仓库之外。
-4. 任何写入前，必须从当前基线创建独立分支。
+1. 在项目根目录运行 `npx @vinsonw2/asset-compound start --yes`。
+2. 读取返回的 `task` 和 `pendingShards`。
+3. 每次只打开一个 shard，按 prompt 增强 `items[].asset`。
+4. 禁止修改 provenance、sourceExcerpt 元数据、稳定 ID/hash/revision、项数和顺序。
+5. 每片保存后立即运行 `npx @vinsonw2/asset-compound validate --input <shard>`。
+6. 单片失败只修复该片；中断后再次运行 `start --yes`，跳过 completed 片。
+7. 所有片完成后运行 `npx @vinsonw2/asset-compound deliver --yes`。
+8. 保存 delivery 和 `secondRunZeroDiff` 证据；仅提交 `docs/可读化/**`。
 
-## 执行流程
+不要把全部 shard 同时加载到上下文。不要为了“完整”而读取被截断来源的全量正文；缺失信息写入 gaps。
 
-1. 运行 `npx @vinsonw2/asset-compound plan --repo <仓库> --config <run.yaml>`。
-2. 运行 `npx @vinsonw2/asset-compound scan`，检查每个来源路径和 revision。
-3. 运行 `npx @vinsonw2/asset-compound prepare ... > prepared.json`。需要业务判断时补充严格 JSON；不得修改 ID、hash 和来源追踪字段。
-4. 确保每条资产分别包含完整性、可执行性、一致性、复用价值四项结论，每项均有证据、缺口和建议。
-5. 运行 `npx @vinsonw2/asset-compound validate --input enriched.json`。预览写入集合；只有全部路径都位于 `docs/可读化/**` 时，才运行 `npx @vinsonw2/asset-compound render ... --assets enriched.json`。
-6. 运行 `npx @vinsonw2/asset-compound verify --repo <仓库> --config <run.yaml>`，保存其中的 `secondRunZeroDiff` JSON 作为 V6 证据。
-7. 运行 `npx @vinsonw2/asset-compound finalize`，保存验收报告。
-8. 在独立分支提交；禁止直接推送基线分支。
-9. 使用完全相同的输入执行第二次运行，要求业务产物零 diff，且 `new=0 updated=0`。
-10. 如需证明受控增量，只能使用一份已批准的真实来源变更，并证明仅对应资产发生增量。
+## 零/低配置规则
 
-## 安全规则
+- 自动识别当前 Git 根目录和基线分支。
+- 自动发现常见 requirement 路径，默认与 git 组成两类来源。
+- 找到多个需求目录时，若用户允许全部使用，传 `--yes`；否则只询问一个最小选择并用 `--requirements <glob>`。
+- 稳定 workspace 默认在 `.git/asset-compound/`，不能移动到应用源码目录。
+- `run.yaml` 只作为高级覆盖；正常流程不要求用户编写。
 
-- 禁止修改应用源码、包清单、原始需求/设计/AI 材料，以及 `docs/可读化/**` 之外的路径。
-- 当前文件 hash 与 state 不一致时，禁止静默覆盖；必须保留原文件并生成冲突报告。
-- schema 校验失败或检测到越界写入后，禁止推进 state。
-- 模型输出属于不可信输入，只有通过随包提供的 JSON Schema 后才能渲染。
-- 增量身份必须使用来源内容 hash，禁止使用模型摘要。
-- Markdown 和截图必须移除密钥、令牌、邮箱等隐私标识。
+## 实质分析门禁
 
-## 稳定契约中英映射
+每条资产的完整性、可执行性、一致性、复用价值都必须有：
 
-代码标识符、命令名和 JSON/schema 字段保持英文，以保障自动化兼容：
+- 具体 evidence；
+- 明确 gaps；
+- 可行动 recommendations。
 
-| 稳定字段 | 中文含义 |
-|---|---|
-| `sourceType` / `sourceRef` / `sourceRevision` | 来源类型 / 来源定位 / 来源版本 |
-| `contentHash` / `assetId` | 内容指纹 / 稳定资产 ID |
-| `analysis.completeness` | 完整性 |
-| `analysis.executability` | 可执行性 |
-| `analysis.consistency` | 一致性 |
-| `analysis.reuseValue` | 复用价值 |
-| `writebackKind` | 回写标记 |
-| `new` / `updated` / `unchanged` / `conflicts` | 新增 / 增量 / 未变 / 冲突 |
-| `secondRunZeroDiff` | 第二次运行业务产物零差异 |
+禁止空数组、空白短语、默认占位结论、编造事实，或只有来源路径却标记为 ready/high。
 
-## 必备证据
+## Provider 边界
 
-- 至少两类真实非空来源的来源清单。
-- 结构化资产与完整的四维分析。
-- 独立分支、提交记录和路径边界验证。
-- state 前后版本、稳定 ID、hash 和 Git revision。
-- 冲突报告；无冲突时也必须明确记录“0 个冲突”。
-- 首次运行结果与无变化二次运行结果。
-- 覆盖 R1–R6 和 V1–V8 的验收报告。
+默认是 editor-assisted，不得宣称纯 CLI 自动完成语义分析。
+
+只有用户明确提供 `--provider <executable>` 时才可使用 provider 自动模式。provider 凭证只能来自进程环境或系统 secret store；禁止写入命令参数、配置、workspace、shard、日志或仓库。
+
+## 安全与验收
+
+- 至少两类真实非空来源；fixture 不能作为验收数据。
+- CLI 只写 `docs/可读化/**`，并拒绝独立分支之外的交付。
+- completed shard 的 hash 变化、provenance 篡改、重复或缺失资产都会阻止 finalize。
+- 自动有效配置写入 `evidence/effective-config.yaml`，来源写入 `source-manifest.yaml`。
+- 人工编辑受管输出时禁止静默覆盖，必须生成冲突报告。
+- 最终必须有完整 R1–R6 / V1–V8 目录和二次 zero diff。
+
+## 旧流程
+
+旧 `plan/scan/prepare/validate/finalize/verify/run` 和单 JSON 数组输入仍兼容。仅在维护旧自动化时使用 `prepare --legacy-stdout`；新任务优先 `start/deliver`。

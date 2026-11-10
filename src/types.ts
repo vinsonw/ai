@@ -95,4 +95,56 @@ export interface PipelineResult {
   changedFiles: string[];
   noOp: boolean;
   secondRunZeroDiff?: boolean;
+  inputFormat?: "generated-baseline" | "legacy-single-file" | "sharded-directory";
+  migrationNotice?: string;
+}
+
+export interface ShardProvenance {
+  assetId: string;
+  sourceType: SourceType;
+  sourceRef: string;
+  sourceRevision: string;
+  contentHash: string;
+  writebackKind: ChangeKind;
+}
+
+export interface ShardExcerpt {
+  text: string;
+  originalChars: number;
+  excerptChars: number;
+  truncated: boolean;
+  strategy: "full" | "head-tail";
+}
+
+export interface ShardItem {
+  provenance: ShardProvenance;
+  sourceExcerpt: ShardExcerpt;
+  asset: AssetRecord;
+}
+
+export interface AssetShard {
+  schemaVersion: 1;
+  shardId: string;
+  items: ShardItem[];
+}
+
+export interface ShardManifestEntry {
+  shardId: string;
+  path: string;
+  assetIds: string[];
+  inputHash: string;
+  status: "pending" | "completed";
+  validatedHash?: string;
+}
+
+export interface ShardManifest {
+  schemaVersion: 1;
+  manifestHash: string;
+  runFingerprint: string;
+  maxChars: number;
+  maxItems: number;
+  totalAssets: number;
+  completedAssets: number;
+  assets: ShardProvenance[];
+  shards: ShardManifestEntry[];
 }
