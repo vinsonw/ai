@@ -1,49 +1,73 @@
-# 编辑器无关资产复利协议
+# 编辑器无关的小上下文资产复利协议
 
-本协议不假设存在统一的 AI 编辑器 Skill 标准。任何能够读取和编辑文件的 AI 工具，都可以按下列文件契约参与。
+本协议不假设统一 AI Skill 标准。任何能读写文件的 AI 编辑器，都可以通过稳定 workspace 逐片参与。
 
-## 角色分工
+## 推荐两步模式
 
-- `asset-compound`：确定性扫描、hash、增量 state、schema 校验、安全回写。
-- AI 编辑器：在禁止修改来源契约字段的前提下，补充语义资产和四维分析。
-- 人工验收者：确认真实来源范围、结论质量、冲突、分支和证据。
+在 React 项目根目录：
+
+```bash
+npx @vinsonw2/asset-compound start --yes
+```
+
+打开命令返回的 `.git/asset-compound/AI-TASK.md`，逐片处理 pending shard。每片保存后执行 `validate --input <shard>`。全部完成后：
+
+```bash
+npx @vinsonw2/asset-compound deliver --yes
+```
+
+不需要 REPO/WORK 环境变量，不需要手写 YAML。自动模式默认发现 requirement 并加入 git 来源；有效配置和来源清单会进入验收证据。
 
 ## 文件流
 
-1. 用户在目标仓库之外保存 `run.yaml`。
-2. `asset-compound prepare ... > prepared.json` 生成 AI 输入。
-3. AI 按 `asset-analysis.zh-CN.md` 将结果写为 `enriched.json`。
-4. `asset-compound validate --input enriched.json` 做独立 schema 校验。
-5. `asset-compound finalize ... --assets enriched.json` 再核对当前扫描的 provenance，并只写 `docs/可读化/**`。
-6. `asset-compound verify --repo ... --config ...` 证明无变化二次运行。
-
-## 初始化目录
-
-`npx @vinsonw2/asset-compound init --output <目录>` 会生成：
-
 ```text
-<目录>/
-├── README.md
+.git/asset-compound/
+├── AI-TASK.md
 ├── run.yaml
-├── prompts/
-│   └── asset-analysis.zh-CN.md
-├── protocol/
-│   └── README.zh-CN.md
-└── schemas/
-    ├── analysis-input.schema.json
-    └── analysis-output.schema.json
+├── session.json
+└── work/
+    ├── manifest.json
+    └── shards/
+        ├── 0001.json
+        └── ...
 ```
 
-该目录应位于目标仓库之外。若必须放入目标仓库，应先提交为受控配置；否则 CLI 的工作树边界检查会拒绝写入。
+- manifest 不含全量来源正文，只保存 provenance、稳定顺序、预算和完成状态。
+- shard 只含必要来源摘录、不可变 provenance 和待增强 asset。
+- `maxChars` 是每片来源摘录总字符预算，`maxItems` 是每片最大资产数。
+- 超长单资产采用确定性首尾摘录，不把完整 2000+ 行材料塞入上下文。
+- validate 成功后才原子更新完成标记和分片 hash。
+- resume 只返回未完成片；完成片被修改后会拒绝继续。
+- deliver 要求全量一一对应、无重复、顺序稳定、所有片已完成。
 
-## 稳定契约
+## 实质质量
 
-命令名、JSON 字段和枚举保持英文。中文提示只负责解释，不得改名。完整字段以 `schemas/*.json` 为准。
+schema 通过只是第一层。每条资产还必须通过质量门禁：
+
+- summary 具有实质内容；
+- 四维各自的 evidence、gaps、recommendations 非空且具体；
+- 不保留默认占位结论；
+- `ready/high` 必须有来源路径之外的具体证据。
+
+## Editor-assisted 与 provider
+
+默认 `start` 是 editor-assisted：CLI 准备任务，但没有模型 API 时不会自动完成语义分析。
+
+可选：
+
+```bash
+npx @vinsonw2/asset-compound start --yes --provider /path/to/provider-adapter
+```
+
+provider 对每片接收 `<shard-path> <task-path>`，原地更新后由 CLI 立即 validate。provider 和凭证由用户管理；凭证只能来自进程环境或系统 secret store，禁止写入配置、workspace、shard 或仓库。
+
+## 旧流程
+
+旧版 JSON 数组输入继续支持，并返回迁移提示。`prepare --legacy-stdout` 保留旧输出。新流程以分片目录作为 `--assets`。
 
 ## 验收边界
 
-- 至少两种不同、真实、非空的来源类型。
+- 至少两种真实非空来源，默认 requirement + git。
+- CLI 只写 `docs/可读化/**`；workspace 位于 `.git`。
 - 示例和 fixture 不能作为真实验收数据。
-- AI 输出必须经过 `validate`。
-- CLI 输出仅允许位于 `docs/可读化/**`。
-- 二次运行必须输出 `secondRunZeroDiff: true`。
+- `deliver` 产出完整验收目录并返回 `secondRunZeroDiff: true`。

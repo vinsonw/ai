@@ -51,6 +51,9 @@ export async function initGenericWorkspace(options: InitOptions = {}) {
     protocol: path.join(outputDir, "protocol", "README.zh-CN.md"),
     inputSchema: path.join(outputDir, "schemas", "analysis-input.schema.json"),
     outputSchema: path.join(outputDir, "schemas", "analysis-output.schema.json"),
+    shardSchema: path.join(outputDir, "schemas", "shard.schema.json"),
+    manifestSchema: path.join(outputDir, "schemas", "shard-manifest.schema.json"),
+    agentsAdapter: path.join(outputDir, "adapters", "AGENTS.md"),
   };
   const config = `outputRoot: docs/可读化
 baseBranch: ${baseBranch}
@@ -72,10 +75,10 @@ exclude:
 本目录由 \`asset-compound init\` 生成，不依赖特定编辑器。
 
 1. 修改 \`run.yaml\`，使用至少两类真实非空来源。
-2. 执行 \`npx @vinsonw2/asset-compound prepare --repo <仓库> --config "${files.config}" > prepared.json\`。
-3. 让任意 AI 编辑器按 \`prompts/asset-analysis.zh-CN.md\` 和 \`protocol/README.zh-CN.md\` 生成 \`enriched.json\`。
-4. 执行 \`npx @vinsonw2/asset-compound validate --input enriched.json\`。
-5. 在独立分支执行 \`npx @vinsonw2/asset-compound finalize --repo <仓库> --config "${files.config}" --assets enriched.json\`。
+2. 执行 \`npx @vinsonw2/asset-compound prepare --repo <仓库> --config "${files.config}" --output "${path.join(outputDir, "work")}"\`。
+3. 让任意 AI 编辑器按提示逐个编辑 \`work/shards/*.json\`，每次只处理一片。
+4. 每片执行 \`npx @vinsonw2/asset-compound validate --input <shard.json>\`，中断后用 \`prepare ... --resume\` 只列出未完成片。
+5. 全部完成后，在独立分支执行 \`npx @vinsonw2/asset-compound finalize --repo <仓库> --config "${files.config}" --assets "${path.join(outputDir, "work")}"\`。
 
 命令名、JSON 字段和枚举保持英文；中文含义见提示协议。
 `;
@@ -100,6 +103,21 @@ exclude:
   await writeGenerated(
     files.outputSchema,
     await packageText("schemas/analysis-output.schema.json"),
+    force,
+  );
+  await writeGenerated(
+    files.shardSchema,
+    await packageText("schemas/shard.schema.json"),
+    force,
+  );
+  await writeGenerated(
+    files.manifestSchema,
+    await packageText("schemas/shard-manifest.schema.json"),
+    force,
+  );
+  await writeGenerated(
+    files.agentsAdapter,
+    await packageText("adapters/AGENTS.md"),
     force,
   );
   return {

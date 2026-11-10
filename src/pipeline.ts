@@ -6,12 +6,19 @@ import { promisify } from "node:util";
 import fg from "fast-glob";
 import writeFileAtomic from "write-file-atomic";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { assertSubstantiveAsset } from "./quality.js";
 import {
   assertValid,
   validateAsset,
   validateConfig,
   validateState,
 } from "./schema.js";
+import {
+  inputIsDirectory,
+  loadShardedDirectory,
+  prepareShards,
+  type PrepareShardsOptions,
+} from "./shards.js";
 import type {
   AssetRecord,
   Conflict,
@@ -291,9 +298,14 @@ export function prepare(records: ScanRecord[], previous: ReadState | null): Asse
       contentHash: record.contentHash,
       title: titleFor(record),
       summary,
-      facts: lines.slice(0, 5),
+      facts: lines.slice(0, 5).map((line) => line.slice(0, 500)),
       decisions: [],
-      actions: hasActions ? lines.filter((line) => /must|should|todo|需要|必须|应当/i.test(line)).slice(0, 5) : [],
+      actions: hasActions
+        ? lines
+            .filter((line) => /must|should|todo|需要|必须|应当/i.test(line))
+            .slice(0, 5)
+            .map((line) => line.slice(0, 500))
+        : [],
       relations: [],
       analysis: {
         completeness: {
@@ -332,14 +344,32 @@ export async function loadAssetsFile(
   file: string,
   records?: ScanRecord[],
 ): Promise<AssetRecord[]> {
-  const value = JSON.parse(await readFile(file, "utf8")) as unknown;
-  if (!Array.isArray(value)) throw new Error("增强资产输入必须是 JSON 数组");
+  return (await loadAssetsInput(file, records)).assets;
+}
+
+export async function loadAssetsInput(
+  file: string,
+  records?: ScanRecord[],
+): Promise<{
+  assets: AssetRecord[];
+  format: "legacy-single-file" | "sharded-directory";
+}> {
+  const sharded = await inputIsDirectory(file);
+  const value: unknown = sharded
+    ? await loadShardedDirectory(file)
+    : JSON.parse(await readFile(file, "utf8"));
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "增强资产输入必须是旧版 JSON 数组或已完成的分片目录；建议运行 prepare --output <目录>",
+    );
+  }
   const assets = value.map((candidate, index) => {
     assertValid(validateAsset, candidate, `资产输入 ${index}`);
     const serialized = JSON.stringify(candidate);
     if (redactSensitive(serialized) !== serialized) {
       throw new Error(`资产输入 ${index} 包含敏感数据`);
     }
+    assertSubstantiveAsset(candidate);
     return candidate;
   });
   const sourceKeys = assets.map((asset) => `${asset.sourceType}:${asset.sourceRef}`);
@@ -372,7 +402,10 @@ export async function loadAssetsFile(
       throw new Error("增强资产输入与本次扫描不匹配");
     }
   }
-  return assets;
+  return {
+    assets,
+    format: sharded ? "sharded-directory" : "legacy-single-file",
+  };
 }
 
 function renderDimension(label: string, finding: AssetRecord["analysis"]["completeness"]): string {
@@ -504,7 +537,7 @@ async function renderAcceptance(
     )
     .replaceAll(
       "{{conflict_and_evidence_links}}",
-      `- [冲突报告](../conflicts/${result.runId}.md)\n- [来源清单](../source-manifest.yaml)`,
+      `- [冲突报告](../conflicts/${result.runId}.md)\n- [来源清单](../source-manifest.yaml)\n- [本次有效配置](effective-config.yaml)`,
     );
 }
 
@@ -589,6 +622,7 @@ export async function render(
       `${OUTPUT_ROOT}/README.md`,
       `${OUTPUT_ROOT}/index.md`,
       `${OUTPUT_ROOT}/source-manifest.yaml`,
+      `${OUTPUT_ROOT}/evidence/effective-config.yaml`,
       `${OUTPUT_ROOT}/conflicts/${runId}.md`,
       `${OUTPUT_ROOT}/evidence/acceptance-report.md`,
       `${OUTPUT_ROOT}/runs/${runId}.md`,
@@ -693,6 +727,7 @@ export async function render(
       "# 可读化资产\n\n从 `index.md` 开始阅读。所有内容均保留来源和来源版本（revision）。\n",
     [`${OUTPUT_ROOT}/index.md`]: renderIndex(assets),
     [`${OUTPUT_ROOT}/source-manifest.yaml`]: stringifyYaml(manifest),
+    [`${OUTPUT_ROOT}/evidence/effective-config.yaml`]: stringifyYaml(config),
     [`${OUTPUT_ROOT}/conflicts/${runId}.md`]: await renderConflicts(runId, conflicts),
     [`${OUTPUT_ROOT}/evidence/acceptance-report.md`]: await renderAcceptance(
       branch,
@@ -775,17 +810,30 @@ export async function runPipeline(
   const previous = await readState(repo);
   const records = await scan(repo, config);
   const baselineAssets = prepare(records, previous);
-  const assets = assetsFile
-    ? (await loadAssetsFile(assetsFile, records)).map((asset) => ({
+  if (!assetsFile) {
+    throw new Error(
+      "finalize/render/run 需要 --assets；请先使用 prepare --output <目录> 逐片分析，旧版 JSON 数组仍兼容",
+    );
+  }
+  const loaded = await loadAssetsInput(assetsFile, records);
+  const assets = loaded.assets.map((asset) => ({
         ...asset,
         writebackKind:
           baselineAssets.find((baseline) => baseline.assetId === asset.assetId)?.writebackKind ??
           asset.writebackKind,
-      }))
-    : baselineAssets;
+      }));
   const result = await render(repo, config, records, assets, previous);
   await verifyGitScope(repo);
-  return result;
+  return {
+    ...result,
+    inputFormat: loaded.format,
+    ...(loaded.format === "legacy-single-file"
+      ? {
+          migrationNotice:
+            "旧版单文件 JSON 仍受支持；建议迁移到 prepare --output <目录> 的分片工作流",
+        }
+      : {}),
+  };
 }
 
 export async function inspectPipeline(repoInput: string, configPath: string) {
@@ -794,6 +842,16 @@ export async function inspectPipeline(repoInput: string, configPath: string) {
   const previous = await readState(repo);
   const records = await scan(repo, config);
   return { records, assets: prepare(records, previous) };
+}
+
+export async function prepareShardPipeline(
+  repoInput: string,
+  configPath: string,
+  output: string,
+  options: PrepareShardsOptions = {},
+) {
+  const inspected = await inspectPipeline(repoInput, configPath);
+  return prepareShards(inspected.records, inspected.assets, output, options);
 }
 
 export async function verifySecondRun(repoInput: string, configPath: string) {

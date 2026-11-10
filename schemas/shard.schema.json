@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-compound.dev/schemas/shard.schema.json",
+  "title": "Small-context asset analysis shard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "shardId", "items"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "shardId": {"type": "string", "pattern": "^[0-9]{4,}$"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provenance", "sourceExcerpt", "asset"],
+        "properties": {
+          "provenance": {"$ref": "#/$defs/provenance"},
+          "sourceExcerpt": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "originalChars",
+              "excerptChars",
+              "truncated",
+              "strategy"
+            ],
+            "properties": {
+              "text": {"type": "string"},
+              "originalChars": {"type": "integer", "minimum": 0},
+              "excerptChars": {"type": "integer", "minimum": 0},
+              "truncated": {"type": "boolean"},
+              "strategy": {"enum": ["full", "head-tail"]}
+            }
+          },
+          "asset": {"$ref": "analysis-output.schema.json"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetId",
+        "sourceType",
+        "sourceRef",
+        "sourceRevision",
+        "contentHash",
+        "writebackKind"
+      ],
+      "properties": {
+        "assetId": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "sourceType": {
+          "enum": ["requirement", "design", "ai-artifact", "git"]
+        },
+        "sourceRef": {"type": "string", "minLength": 1},
+        "sourceRevision": {"type": "string", "minLength": 1},
+        "contentHash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "writebackKind": {"enum": ["新增", "增量", "未变"]}
+      }
+    }
+  }
+}

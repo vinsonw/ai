@@ -23,6 +23,8 @@ describe("中文 CLI", () => {
     expect(result.stdout).toContain("生成可增量、可追溯的资产");
     expect(result.stdout).toContain("prepare");
     expect(result.stdout).toContain("finalize");
+    expect(result.stdout).toContain("start");
+    expect(result.stdout).toContain("deliver");
   });
 
   it("将 Commander 参数错误本地化且保持非零退出码", () => {
@@ -30,5 +32,14 @@ describe("中文 CLI", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("错误：");
     expect(result.stderr).toContain("缺少必填选项");
+  });
+
+  it("说明分片预算、断点续跑和旧格式兼容", () => {
+    const result = invoke(["prepare", "--help"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("--max-chars");
+    expect(result.stdout).toContain("--max-items");
+    expect(result.stdout).toContain("--resume");
+    expect(result.stdout).toContain("--legacy-stdout");
   });
 });

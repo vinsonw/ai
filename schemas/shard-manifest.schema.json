@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-compound.dev/schemas/shard-manifest.schema.json",
+  "title": "Small-context shard progress manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "manifestHash",
+    "runFingerprint",
+    "maxChars",
+    "maxItems",
+    "totalAssets",
+    "completedAssets",
+    "assets",
+    "shards"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "manifestHash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "runFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "maxChars": {"type": "integer", "minimum": 32},
+    "maxItems": {"type": "integer", "minimum": 1},
+    "totalAssets": {"type": "integer", "minimum": 0},
+    "completedAssets": {"type": "integer", "minimum": 0},
+    "assets": {"type": "array"},
+    "shards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["shardId", "path", "assetIds", "inputHash", "status"],
+        "properties": {
+          "shardId": {"type": "string", "pattern": "^[0-9]{4,}$"},
+          "path": {"type": "string", "pattern": "^shards/[0-9]+\\.json$"},
+          "assetIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+          },
+          "inputHash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "status": {"enum": ["pending", "completed"]},
+          "validatedHash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

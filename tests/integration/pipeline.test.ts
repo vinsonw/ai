@@ -2,7 +2,14 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { git, loadConfig, runPipeline, scan } from "../../src/pipeline.js";
+import {
+  git,
+  inspectPipeline,
+  loadConfig,
+  runPipeline,
+  scan,
+} from "../../src/pipeline.js";
+import { writeLegacyAssets } from "../helpers.js";
 
 const temporary: string[] = [];
 const fixture = path.resolve("tests/fixtures/sample-project");
@@ -25,6 +32,14 @@ afterEach(async () => {
 });
 
 describe("incremental pipeline", () => {
+  async function assetsFile(repo: string, config: string): Promise<string> {
+    const target = path.join(path.dirname(repo), `${path.basename(repo)}-assets.json`);
+    temporary.push(target);
+    const inspected = await inspectPipeline(repo, config);
+    await writeLegacyAssets(target, inspected.assets);
+    return target;
+  }
+
   it("rejects source globs that escape the repository", async () => {
     const repo = await createRepository();
     const external = await mkdtemp(path.join(path.dirname(repo), "asset-external-"));
@@ -53,15 +68,16 @@ sourceSets:
   it("writes only docs/可读化 and performs a zero-diff second run", async () => {
     const repo = await createRepository();
     const config = path.join(repo, "run.yaml");
+    const assets = await assetsFile(repo, config);
 
-    const first = await runPipeline(repo, config);
+    const first = await runPipeline(repo, config, assets);
     expect(first.counts.new).toBeGreaterThan(0);
     expect(first.changedFiles.length).toBeGreaterThan(0);
     expect(first.changedFiles.every((file) => file.startsWith("docs/可读化/"))).toBe(true);
     expect(first.conflicts).toEqual([]);
 
     const statusAfterFirst = await git(repo, ["status", "--porcelain=v1"]);
-    const second = await runPipeline(repo, config);
+    const second = await runPipeline(repo, config, assets);
     const statusAfterSecond = await git(repo, ["status", "--porcelain=v1"]);
 
     expect(second.noOp).toBe(true);
@@ -102,9 +118,11 @@ sourceSets:
   it("detects manual edits instead of overwriting them", async () => {
     const repo = await createRepository();
     const config = path.join(repo, "run.yaml");
-    const first = await runPipeline(repo, config);
+    const assets = await assetsFile(repo, config);
+    const first = await runPipeline(repo, config, assets);
     await git(repo, ["add", "docs/可读化"]);
     await git(repo, ["commit", "-m", "docs: generated baseline"]);
+    const nextAssets = await assetsFile(repo, config);
 
     const target = first.assets.find((asset) => asset.sourceType === "requirement");
     expect(target).toBeDefined();
@@ -114,7 +132,7 @@ sourceSets:
       writeFile(generated, `${current}\nManual edit\n`, "utf8"),
     );
 
-    const result = await runPipeline(repo, config);
+    const result = await runPipeline(repo, config, nextAssets);
     expect(result.conflicts.some((conflict) => conflict.assetId === target!.assetId)).toBe(true);
     expect(await readFile(generated, "utf8")).toContain("Manual edit");
   });
@@ -122,15 +140,17 @@ sourceSets:
   it("protects manually edited managed index output", async () => {
     const repo = await createRepository();
     const config = path.join(repo, "run.yaml");
-    await runPipeline(repo, config);
+    const assets = await assetsFile(repo, config);
+    await runPipeline(repo, config, assets);
     await git(repo, ["add", "docs/可读化"]);
     await git(repo, ["commit", "-m", "docs: generated baseline"]);
+    const nextAssets = await assetsFile(repo, config);
 
     const index = path.join(repo, "docs/可读化/index.md");
     const current = await readFile(index, "utf8");
     await writeFile(index, `${current}\nManual index note\n`, "utf8");
 
-    const result = await runPipeline(repo, config);
+    const result = await runPipeline(repo, config, nextAssets);
     expect(result.conflicts.some((conflict) => conflict.path.endsWith("index.md"))).toBe(true);
     expect(await readFile(index, "utf8")).toContain("Manual index note");
   });
