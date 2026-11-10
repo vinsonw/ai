@@ -1,4 +1,4 @@
-# asset-compound
+# @vinsonw2/asset-compound
 
 编辑器无关的 Node.js 20+ / TypeScript npm 包：把真实项目材料沉淀为 `docs/可读化/` 下可增量、可追溯、可验收的资产。
 
@@ -6,32 +6,32 @@
 
 ## 包名
 
-发布名选择 `asset-compound`，bin 同名：
+公开发布名为 `@vinsonw2/asset-compound`，bin 保持 `asset-compound`：
 
 ```bash
-npx asset-compound --help
+npx @vinsonw2/asset-compound --help
 ```
 
-2026-11-10 查询 npm registry 时，该未加 scope 名称返回 404，表示当时尚未注册；发布前必须再次执行：
+2026-11-10 查询 npm registry 时，该 scoped 名称返回 404，表示当时尚未注册；发布前必须再次执行：
 
 ```bash
-npm view asset-compound name version
+npm view @vinsonw2/asset-compound name version
 ```
 
-包名可被其他账户抢先注册。若已不可用，改用发布者有权限的 scope，例如 `@your-scope/asset-compound`，并保留 bin 名 `asset-compound`。发布 scoped public package 需要 npm 账户属于该 scope，且 `publishConfig.access` 为 `public`。
+包名可被其他账户抢先注册。发布 scoped public package 要求发布账号拥有 `@vinsonw2` scope 权限，且 `publishConfig.access` 为 `public`。
 
 ## npx 快速开始
 
 初始化编辑器无关工作区（默认 `~/.asset-compound`）：
 
 ```bash
-npx asset-compound init
+npx @vinsonw2/asset-compound init
 ```
 
 建议为每个真实项目指定仓库外目录：
 
 ```bash
-npx asset-compound init \
+npx @vinsonw2/asset-compound init \
   --output "$HOME/.asset-compound/my-react-project" \
   --base-branch main
 ```
@@ -63,9 +63,9 @@ export WORK="$HOME/.asset-compound/my-react-project"
 在目标仓库独立分支上运行：
 
 ```bash
-npx asset-compound plan --repo "$REPO" --config "$WORK/run.yaml"
-npx asset-compound scan --repo "$REPO" --config "$WORK/run.yaml" > "$WORK/scan.json"
-npx asset-compound prepare --repo "$REPO" --config "$WORK/run.yaml" > "$WORK/prepared.json"
+npx @vinsonw2/asset-compound plan --repo "$REPO" --config "$WORK/run.yaml"
+npx @vinsonw2/asset-compound scan --repo "$REPO" --config "$WORK/run.yaml" > "$WORK/scan.json"
+npx @vinsonw2/asset-compound prepare --repo "$REPO" --config "$WORK/run.yaml" > "$WORK/prepared.json"
 cp "$WORK/prepared.json" "$WORK/enriched.json"
 ```
 
@@ -78,12 +78,12 @@ cp "$WORK/prepared.json" "$WORK/enriched.json"
 然后：
 
 ```bash
-npx asset-compound validate --input "$WORK/enriched.json"
-npx asset-compound finalize \
+npx @vinsonw2/asset-compound validate --input "$WORK/enriched.json"
+npx @vinsonw2/asset-compound finalize \
   --repo "$REPO" \
   --config "$WORK/run.yaml" \
   --assets "$WORK/enriched.json"
-npx asset-compound verify --repo "$REPO" --config "$WORK/run.yaml"
+npx @vinsonw2/asset-compound verify --repo "$REPO" --config "$WORK/run.yaml"
 ```
 
 命令名、代码标识符和 JSON/schema 字段保持英文稳定契约；面向验收者的文档和 CLI 提示为中文。
@@ -93,7 +93,7 @@ npx asset-compound verify --repo "$REPO" --config "$WORK/run.yaml"
 只有显式执行下列命令时才访问 Cursor Skill 目录：
 
 ```bash
-npx asset-compound install-skill --editor cursor
+npx @vinsonw2/asset-compound install-skill --editor cursor
 ```
 
 默认安装到：
@@ -105,13 +105,13 @@ npx asset-compound install-skill --editor cursor
 覆盖已有安装：
 
 ```bash
-npx asset-compound install-skill --editor cursor --force
+npx @vinsonw2/asset-compound install-skill --editor cursor --force
 ```
 
 自定义目录：
 
 ```bash
-npx asset-compound install-skill \
+npx @vinsonw2/asset-compound install-skill \
   --editor cursor \
   --target /custom/path/asset-compounding
 ```
@@ -134,7 +134,7 @@ verify         验证写入范围；带 --config 时验证二次零差异
 完整参数：
 
 ```bash
-npx asset-compound <command> --help
+npx @vinsonw2/asset-compound <command> --help
 ```
 
 ## 能力与安全边界
@@ -166,16 +166,16 @@ import {
   runPipeline,
   verifySecondRun,
   initGenericWorkspace,
-} from "asset-compound";
+} from "@vinsonw2/asset-compound";
 ```
 
 资源子路径通过 `exports` 暴露，例如：
 
 ```text
-asset-compound/prompts/asset-analysis.zh-CN.md
-asset-compound/protocol/README.zh-CN.md
-asset-compound/schemas/analysis-output.schema.json
-asset-compound/cursor-skill
+@vinsonw2/asset-compound/prompts/asset-analysis.zh-CN.md
+@vinsonw2/asset-compound/protocol/README.zh-CN.md
+@vinsonw2/asset-compound/schemas/analysis-output.schema.json
+@vinsonw2/asset-compound/cursor-skill
 ```
 
 ## 本地开发
@@ -206,7 +206,7 @@ pnpm audit --prod
 ```bash
 npm login
 npm whoami
-npm view asset-compound name version
+npm view @vinsonw2/asset-compound name version
 pnpm install --frozen-lockfile
 npm run check
 npm run smoke
@@ -223,9 +223,4 @@ npm publish
 
 本 PR 不执行真实发布，也不需要 npm token。建议在受保护 CI 中使用 npm trusted publishing；需要 provenance 时由支持的 CI 执行 `npm publish --provenance`。不在 `publishConfig` 中强制 provenance，以免本地凭证发布在不支持的环境中失败。
 
-如果改用 scope：
-
-1. 将 `package.json.name` 改为 `@owned-scope/asset-compound`；
-2. 确认发布账号属于该 scope；
-3. 保留 `"publishConfig": { "access": "public" }`；
-4. 使用 `npx @owned-scope/asset-compound ...`，bin 仍为 `asset-compound`。
+`package.json.name` 固定为 `@vinsonw2/asset-compound`，`publishConfig.access` 为 `public`，registry 为 `https://registry.npmjs.org/`。bin 仍为 `asset-compound`。

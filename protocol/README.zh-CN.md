@@ -19,7 +19,7 @@
 
 ## 初始化目录
 
-`npx asset-compound init --output <目录>` 会生成：
+`npx @vinsonw2/asset-compound init --output <目录>` 会生成：
 
 ```text
 <目录>/
