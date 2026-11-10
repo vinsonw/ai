@@ -1,5 +1,5 @@
 {
-  "name": "asset-compound",
+  "name": "@vinsonw2/asset-compound",
   "version": "0.1.0",
   "description": "Editor-neutral CLI and protocol for incremental, traceable documentation assets",
   "type": "module",

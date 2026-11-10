@@ -72,10 +72,10 @@ exclude:
 本目录由 \`asset-compound init\` 生成，不依赖特定编辑器。
 
 1. 修改 \`run.yaml\`，使用至少两类真实非空来源。
-2. 执行 \`npx asset-compound prepare --repo <仓库> --config "${files.config}" > prepared.json\`。
+2. 执行 \`npx @vinsonw2/asset-compound prepare --repo <仓库> --config "${files.config}" > prepared.json\`。
 3. 让任意 AI 编辑器按 \`prompts/asset-analysis.zh-CN.md\` 和 \`protocol/README.zh-CN.md\` 生成 \`enriched.json\`。
-4. 执行 \`npx asset-compound validate --input enriched.json\`。
-5. 在独立分支执行 \`npx asset-compound finalize --repo <仓库> --config "${files.config}" --assets enriched.json\`。
+4. 执行 \`npx @vinsonw2/asset-compound validate --input enriched.json\`。
+5. 在独立分支执行 \`npx @vinsonw2/asset-compound finalize --repo <仓库> --config "${files.config}" --assets enriched.json\`。
 
 命令名、JSON 字段和枚举保持英文；中文含义见提示协议。
 `;

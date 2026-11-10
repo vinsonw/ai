@@ -155,7 +155,7 @@ try {
   process.stdout.write(
     `${JSON.stringify(
       {
-        package: "asset-compound",
+        package: "@vinsonw2/asset-compound",
         source: "npm pack tarball",
         npxOnly: true,
         genericInit: true,
