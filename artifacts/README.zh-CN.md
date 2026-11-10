@@ -1,8 +1,9 @@
 # `asset-compound` 0.1.2 离线安装包
 
-`asset-compound-0.1.2.tgz` 是从 PR #5 合并后的 `main` 构建的非递归 payload，
-包含标准 docs、2.1/2.2、R1–R6、V1–V8 验收重构。它内置全部生产依赖，可在
-没有 registry 网络访问、没有预热 npm cache 的干净目录中本地安装。
+`asset-compound-0.1.2.tgz` 以 PR #5 合并后的 `main` 为基线，并包含 PR #6 的
+Git 2.20.1 兼容与小上下文 AI 提示优化。它具备标准 docs、2.1/2.2、R1–R6、
+V1–V8 验收能力，并内置全部生产依赖，可在没有 registry 网络访问、没有预热 npm
+cache 的干净目录中本地安装；运行要求 Node.js `>=20`、Git `>=2.20.1`。
 
 生成过程先用 `0.1.2` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
 再仅向 staging 的 `package.json` 加入 `bundledDependencies` 并安装生产依赖。

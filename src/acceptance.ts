@@ -2,7 +2,7 @@ import { access, lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import { assertSubstantiveAsset } from "./quality.js";
-import { git, renderAsset, sha256 } from "./pipeline.js";
+import { currentBranch, git, renderAsset, sha256 } from "./pipeline.js";
 import type { AssetRecord, PipelineResult, RunConfig } from "./types.js";
 
 const STANDARD_DIRECTORIES = [
@@ -132,7 +132,7 @@ export async function detectAcceptanceMetadata(
 ): Promise<AcceptanceMetadata> {
   const rawRepository = await git(repo, ["config", "--get", "remote.origin.url"]);
   const practitioner = await git(repo, ["config", "--get", "user.name"]);
-  const branch = await git(repo, ["branch", "--show-current"]);
+  const branch = await currentBranch(repo);
   const head = await git(repo, ["rev-parse", "HEAD"]);
   if (!rawRepository.trim() || !practitioner.trim()) {
     throw new Error("验收报告需要真实 origin URL 和 git user.name；禁止用推断值代替");

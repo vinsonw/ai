@@ -35,6 +35,9 @@ npx @vinsonw2/asset-compound deliver --yes
 
 - manifest 不含全量来源正文，只保存 provenance、稳定顺序、预算和完成状态。
 - shard 只含必要来源摘录、不可变 provenance 和待增强 asset。
+- AI 每轮只读 manifest 和第一条 pending shard；不得加载全量、猜目录或补读被截断全文。
+- 唯一输出是原地覆盖当前 shard 的纯 JSON，只能修改 `items[].asset` 语义字段；
+  禁止改源码、原始 docs、manifest、配置或其他 shard。
 - `maxChars` 是每片来源摘录总字符预算，`maxItems` 是每片最大资产数。
 - 超长单资产采用确定性首尾摘录，不把完整 2000+ 行材料塞入上下文。
 - validate 成功后才原子更新完成标记和分片 hash。
@@ -46,8 +49,10 @@ npx @vinsonw2/asset-compound deliver --yes
 
 schema 通过只是第一层。每条资产还必须通过质量门禁：
 
-- summary 具有实质内容；
+- summary 至少 20 个字符；
 - 四维各自的 evidence、gaps、recommendations 非空且具体；
+- evidence 引用或紧密复述当前 sourceExcerpt；证据不足写入 gap，不得编造；
+- 前三维 level 仅用 `ready/partial/missing/conflict`，复用价值仅用 `high/medium/low`；
 - 不保留默认占位结论；
 - `ready/high` 必须有来源路径之外的具体证据。
 

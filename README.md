@@ -87,7 +87,7 @@ npx @vinsonw2/asset-compound start --yes
 npx @vinsonw2/asset-compound deliver --yes
 ```
 
-bin 仍为 `asset-compound`。Node.js 要求 `>=20`。
+bin 仍为 `asset-compound`。Node.js 要求 `>=20`，Git 要求 `>=2.20.1`。
 
 ## 自动发现与最小选择
 

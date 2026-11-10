@@ -185,7 +185,8 @@ describe("分片目录 finalize", () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "asset-shard-repo-"));
     temporary.push(repo);
     await cp(fixture, repo, { recursive: true });
-    await git(repo, ["init", "-b", "main"]);
+    await git(repo, ["init"]);
+    await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Shard Test"]);
     await git(repo, ["config", "user.email", "shard@example.invalid"]);
     await git(repo, ["add", "."]);
@@ -218,7 +219,8 @@ describe("零配置 start/deliver", () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "asset-marked-fixture-"));
     temporary.push(repo);
     await cp(fixture, repo, { recursive: true });
-    await git(repo, ["init", "-b", "main"]);
+    await git(repo, ["init"]);
+    await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Fixture Test"]);
     await git(repo, ["config", "user.email", "fixture@example.invalid"]);
     await git(repo, ["add", "."]);
@@ -244,7 +246,8 @@ describe("零配置 start/deliver", () => {
       "# 结账需求\n必须支持明确的成功和失败验收路径。\n",
       "utf8",
     );
-    await git(repo, ["init", "-b", "main"]);
+    await git(repo, ["init"]);
+    await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Zero Config"]);
     await git(repo, ["config", "user.email", "zero@example.invalid"]);
     await git(repo, ["remote", "add", "origin", "https://secret-token@example.invalid/demo/react-style-fixture.git"]);
@@ -259,7 +262,24 @@ describe("零配置 start/deliver", () => {
     expect(started.mode).toBe("editor-assisted");
     await expect(deliverWorkflow({ cwd: repo })).rejects.toThrow("--yes");
     expect(started.effectiveConfig).toContain(`${path.sep}.git${path.sep}`);
-    expect(await readFile(started.task, "utf8")).toContain("交给任意 AI 编辑器执行");
+    const task = await readFile(started.task, "utf8");
+    for (const constraint of [
+      "本轮唯一输入边界",
+      "第一条 `status=pending`",
+      "事实只能来自该片",
+      "禁止自行扫描仓库、猜测目录",
+      "唯一输出路径就是当前 shard 原文件",
+      "不修改项目源码",
+      "summary` 至少 20 个字符",
+      "evidence 必须引用或紧密复述",
+      "exit 0 才表示该片完成",
+      "2.1",
+      "2.2",
+      "R1–R6",
+      "V1–V8",
+    ]) {
+      expect(task).toContain(constraint);
+    }
     const effectiveBefore = await readFile(started.effectiveConfig, "utf8");
     await expect(
       startWorkflow({ cwd: repo, yes: true, baseBranch: "other" }),

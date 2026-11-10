@@ -1,8 +1,14 @@
-# 小上下文资产复利四维分析提示
+# 小上下文资产复利：单片执行契约
 
-一次只处理一个 `work/shards/NNNN.json`。不要请求、复制或拼接全部扫描内容。
+一次只处理 manifest 中第一条 `status=pending` 的 `work/shards/NNNN.json`。
+本轮事实输入仅限当前片的 `sourceExcerpt.text` 和 `provenance`。不要读取、请求、
+复制或拼接全部 shards，不要自行扫描仓库或猜测来源目录；`truncated=true` 时也
+不得打开原始全文，缺失信息写入 gaps。
 
-## 允许修改
+## 唯一输出与 schema
+
+唯一输出是原地覆盖当前 shard 的纯 JSON。不得创建旁路文件、Markdown 围栏或解释
+文字，不得修改项目源码、原始 docs、配置、manifest 或其他 shard。
 
 只修改 `items[].asset` 中的语义字段：
 
@@ -21,33 +27,52 @@
 - `items[].sourceExcerpt` 及其截断元数据
 - asset 中的 `assetId/sourceType/sourceRef/sourceRevision/contentHash/writebackKind`
 - 数组项数量和顺序
+- schema 未声明的任何新字段
 
-来源摘录可能因预算显示 `truncated: true`。只能基于可见摘录得出结论；信息不足应明确写入 gaps，不得猜测被省略内容。最终 CLI 会用 provenance 对完整来源重新核验。
+当前 shard 结构与 CLI `validate` 是唯一 schema 权威。
+
+## 必填资产字段
+
+- `title`：明确命名资产。
+- `summary`：至少 20 个字符。
+- `facts/decisions/actions/relations`：四个数组必须存在；只填摘录可证明的内容，
+  没有证据时用空数组，禁止编造。
+- `analysis`：必须包含以下四维，不能缺项。
 
 ## 四维分析
 
-逐项填写：
+1. `completeness`：完整性，level 仅用 `ready/partial/missing/conflict`；
+2. `executability`：可执行性，level 仅用 `ready/partial/missing/conflict`；
+3. `consistency`：一致性，level 仅用 `ready/partial/missing/conflict`；
+4. `reuseValue`：复用价值，level 仅用 `high/medium/low`。
 
-1. `completeness`：完整性；
-2. `executability`：可执行性；
-3. `consistency`：一致性；
-4. `reuseValue`：复用价值。
-
-每维的 `evidence/gaps/recommendations` 都必须至少包含一条具体、可读、可行动的内容。禁止：
+每维的 `evidence/gaps/recommendations` 都必须至少一项，每项至少 4 个字符。
+evidence 必须引用或紧密复述 `sourceExcerpt.text` 的具体事实。禁止：
 
 - 空数组或空白字符串；
 - 保留 prepare 默认占位结论；
 - 只把来源路径当成 evidence；
+- 四维复用同一套泛化套话；
 - 在没有具体证据时标记 `ready` 或 `high`；
-- 编造摘录中不存在的事实。
+- 编造负责人、时间、接口、数据结构、跨片一致性或任何摘录外事实。
 
-完成后保存原 JSON 文件，再执行：
+信息不足时降低 level 并写明 gap；发现冲突时使用 `conflict` 并记录双方可见证据。
+
+## 完成、失败与续跑
+
+保存当前 shard 后只执行：
 
 ```bash
 npx @vinsonw2/asset-compound validate --input <当前分片路径>
 ```
 
-只有 validate 成功，manifest 才会持久化该片的完成标记。失败时只修复当前片，不重做已完成片。
+只有 exit 0，manifest 才会持久化该片的 completed 标记。失败时根据 stderr 只修
+当前片并重试同一命令；不得跳过、手改完成标记或重做已完成片。摘录为空、含敏感
+信息、不可变字段异常或无法形成实质结论时，停止并报告原因，禁止伪造通过。
+
+单片成功后释放上下文，再取下一条 pending。中断后重新运行 `start --yes`，只继续
+pending shard。全部完成后如实填写 retrospective，再运行 `deliver --yes`。只有
+2.1、2.2、R1–R6、V1–V8、冲突门禁和二次 zero diff 全通过，才能宣称完成。
 
 ## 安全
 

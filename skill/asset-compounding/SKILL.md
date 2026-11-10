@@ -12,8 +12,8 @@ description: 在当前 Git 项目启动小上下文资产复利队列，逐片�
 当用户要求执行资产复利时：
 
 1. 在项目根目录运行 `npx @vinsonw2/asset-compound start --yes`。
-2. 读取返回的 `task` 和 `pendingShards`。
-3. 每次只打开一个 shard，按 prompt 增强 `items[].asset`。
+2. 只读取返回的 `task`、manifest 和第一条 pending shard；不得猜测目录。
+3. 每次只打开一个 shard，事实仅取自该片 `sourceExcerpt.text/provenance`。
 4. 禁止修改 provenance、sourceExcerpt 元数据、稳定 ID/hash/revision、项数和顺序。
 5. 每片保存后立即运行 `npx @vinsonw2/asset-compound validate --input <shard>`。
 6. 单片失败只修复该片；中断后再次运行 `start --yes`，跳过 completed 片。
@@ -21,7 +21,9 @@ description: 在当前 Git 项目启动小上下文资产复利队列，逐片�
 8. 所有片完成后运行 `npx @vinsonw2/asset-compound deliver --yes`。
 9. 保存 delivery 和 `secondRunZeroDiff` 证据；仅提交受管的标准 `docs/**`。
 
-不要把全部 shard 同时加载到上下文。不要为了“完整”而读取被截断来源的全量正文；缺失信息写入 gaps。
+唯一输出是原地覆盖当前 shard 的纯 JSON，且只能修改 `items[].asset` 的语义字段。
+不得改源码、原始 docs、配置、manifest 或其他 shard；不要把全部 shard 同时加载
+到上下文。不要为了“完整”而读取被截断来源的全量正文；缺失信息写入 gaps。
 
 ## 零/低配置规则
 
@@ -39,7 +41,13 @@ description: 在当前 Git 项目启动小上下文资产复利队列，逐片�
 - 明确 gaps；
 - 可行动 recommendations。
 
-禁止空数组、空白短语、默认占位结论、编造事实，或只有来源路径却标记为 ready/high。
+`summary` 至少 20 字符；四维三类数组均至少一项、每项至少 4 字符。前三维 level
+仅用 `ready/partial/missing/conflict`，复用价值仅用 `high/medium/low`。evidence
+必须引用或紧密复述当前摘录的具体事实。禁止空数组、默认占位、泛化套话、编造事实，
+或只有来源路径却标记为 ready/high。
+
+validate exit 0 才能标记该片完成。失败时只按 stderr 修当前片并重试；不得跳过或
+手改 manifest。证据不足、敏感信息或不可变字段异常时停止并报告，不能伪造通过。
 
 ## Provider 边界
 

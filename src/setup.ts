@@ -76,7 +76,8 @@ exclude:
 
 1. 修改 \`run.yaml\`，使用至少两类真实非空来源。
 2. 执行 \`npx @vinsonw2/asset-compound prepare --repo <仓库> --config "${files.config}" --output "${path.join(outputDir, "work")}"\`。
-3. 让任意 AI 编辑器按提示逐个编辑 \`work/shards/*.json\`，每次只处理一片。
+3. 让 AI 编辑器先读生成的单片提示和 manifest，只打开第一条 pending shard；
+   事实仅来自当前 sourceExcerpt，唯一输出为原地修改当前 \`items[].asset\`，不得改源码或其他文件。
 4. 每片执行 \`npx @vinsonw2/asset-compound validate --input <shard.json>\`，中断后用 \`prepare ... --resume\` 只列出未完成片。
 5. 全部完成后，在独立分支执行 \`npx @vinsonw2/asset-compound finalize --repo <仓库> --config "${files.config}" --assets "${path.join(outputDir, "work")}"\`。
 

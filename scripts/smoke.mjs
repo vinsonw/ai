@@ -52,7 +52,8 @@ async function enrich(file) {
 
 try {
   await cp(path.join(root, "tests/fixtures/sample-project"), repo, { recursive: true });
-  await run("git", ["init", "-b", "main"]);
+  await run("git", ["init"]);
+  await run("git", ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await run("git", ["config", "user.name", "Asset Smoke"]);
   await run("git", ["config", "user.email", "asset-smoke@example.invalid"]);
   await run("git", ["add", "."]);
