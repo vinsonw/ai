@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-compound.dev/schemas/read-state.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "selfHash",
+    "baseBranch",
+    "baseCommit",
+    "lastReadCommit",
+    "sources",
+    "assets",
+    "managedFiles"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "selfHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "baseBranch": {"type": "string"},
+    "baseCommit": {"type": "string"},
+    "lastReadCommit": {"type": "string"},
+    "sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contentHash",
+          "sourceRevision",
+          "assetIds",
+          "status"
+        ],
+        "properties": {
+          "contentHash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "sourceRevision": {"type": "string"},
+          "assetIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "status": {"enum": ["active", "stale"]}
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "canonicalContentHash",
+          "outputPath",
+          "lastGeneratedHash"
+        ],
+        "properties": {
+          "canonicalContentHash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "outputPath": {
+            "type": "string",
+            "pattern": "^(?!.*(?:^|/)\\.\\.(?:/|$))docs/可读化/.+$"
+          },
+          "lastGeneratedHash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "managedFiles": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?!.*(?:^|/)\\.\\.(?:/|$))docs/可读化/.+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      }
+    }
+  }
+}

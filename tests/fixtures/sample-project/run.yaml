@@ -1,0 +1,14 @@
+outputRoot: docs/可读化
+baseBranch: main
+sourceSets:
+  - type: requirement
+    include:
+      - docs/requirements/**/*.md
+  - type: design
+    include:
+      - docs/design/**/*.md
+  - type: git
+    maxCommits: 10
+exclude:
+  - node_modules/**
+  - dist/**

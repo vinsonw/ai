@@ -1,0 +1,82 @@
+{
+  "name": "asset-compound",
+  "version": "0.1.0",
+  "description": "Editor-neutral CLI and protocol for incremental, traceable documentation assets",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "asset-compound": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "templates",
+    "prompts",
+    "protocol",
+    "skill"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schemas/*": "./schemas/*",
+    "./templates/*": "./templates/*",
+    "./prompts/*": "./prompts/*",
+    "./protocol/*": "./protocol/*",
+    "./cursor-skill": "./skill/asset-compounding/SKILL.md",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:packed": "node scripts/packed-smoke.mjs",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "prepack": "npm run check"
+  },
+  "keywords": [
+    "ai-editor",
+    "documentation",
+    "incremental",
+    "knowledge-management",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinsonw/ai.git"
+  },
+  "homepage": "https://github.com/vinsonw/ai#readme",
+  "bugs": {
+    "url": "https://github.com/vinsonw/ai/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.4",
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "commander": "^15.1.0",
+    "fast-glob": "^3.3.3",
+    "write-file-atomic": "^8.0.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/write-file-atomic": "^4.0.3",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
