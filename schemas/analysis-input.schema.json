@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-compound.dev/schemas/analysis-input.schema.json",
+  "title": "Four-dimension analysis input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sourceType",
+    "sourceRef",
+    "sourceRevision",
+    "contentHash",
+    "content"
+  ],
+  "properties": {
+    "sourceType": {
+      "enum": ["requirement", "design", "ai-artifact", "git"]
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRevision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contentHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "content": {
+      "type": "string"
+    }
+  }
+}

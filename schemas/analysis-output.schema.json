@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asset-compound.dev/schemas/analysis-output.schema.json",
+  "title": "Structured asset with four-dimension analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assetId",
+    "sourceType",
+    "sourceRef",
+    "sourceRevision",
+    "contentHash",
+    "title",
+    "summary",
+    "facts",
+    "decisions",
+    "actions",
+    "relations",
+    "analysis",
+    "writebackKind"
+  ],
+  "properties": {
+    "assetId": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "sourceType": {
+      "enum": ["requirement", "design", "ai-artifact", "git"]
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRevision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contentHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string"
+    },
+    "facts": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "decisions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "actions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "relations": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completeness",
+        "executability",
+        "consistency",
+        "reuseValue"
+      ],
+      "properties": {
+        "completeness": {"$ref": "#/$defs/dimension"},
+        "executability": {"$ref": "#/$defs/dimension"},
+        "consistency": {"$ref": "#/$defs/dimension"},
+        "reuseValue": {"$ref": "#/$defs/dimension"}
+      }
+    },
+    "writebackKind": {
+      "enum": ["新增", "增量", "未变"]
+    }
+  },
+  "$defs": {
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "evidence", "gaps", "recommendations"],
+      "properties": {
+        "level": {
+          "enum": [
+            "ready",
+            "partial",
+            "missing",
+            "conflict",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "gaps": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    }
+  }
+}

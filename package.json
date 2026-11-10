@@ -1,0 +1,50 @@
+{
+  "name": "@vinsonw/asset-compounding-cli",
+  "version": "0.1.0",
+  "description": "Deterministic asset compounding pipeline for Cursor Skills",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "asset-compound": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "templates",
+    "skill"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke.mjs",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "keywords": [
+    "cursor-skill",
+    "documentation",
+    "incremental"
+  ],
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.4",
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "commander": "^15.1.0",
+    "fast-glob": "^3.3.3",
+    "write-file-atomic": "^8.0.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/write-file-atomic": "^4.0.3",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
