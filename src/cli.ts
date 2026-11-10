@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     .name("asset-compound")
     .description("在 docs/可读化 下生成可增量、可追溯的资产")
     .usage("[选项] <命令>")
-    .version("0.1.0", "-V, --version", "显示版本")
+    .version("0.1.1", "-V, --version", "显示版本")
     .helpOption("-h, --help", "显示帮助")
     .addHelpCommand("help [command]", "显示指定命令的帮助")
     .showHelpAfterError("（使用 --help 查看帮助）")

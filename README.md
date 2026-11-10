@@ -158,6 +158,25 @@ tarball 包含：
 - `prompts/`
 - `protocol/`
 - `skill/asset-compounding/`：可选 Cursor 适配器
+- `artifacts/`：从 npm 官方 registry 获取的 `0.1.0` tarball、SHA-256 清单和中文说明
+
+## 0.1.0 离线 tarball
+
+`artifacts/asset-compound-0.1.0.tgz` 是 npm 官方 registry 已发布
+`@vinsonw2/asset-compound@0.1.0` 的原始 tarball，不是从当前工作树重新打包的。
+固定 SHA-256 记录在 `artifacts/SHA256SUMS`。
+
+在其他平台完成文件同步或下载后，先核对 SHA-256，再在 tarball 所在目录安装：
+
+```bash
+npm install ./asset-compound-0.1.0.tgz
+npx asset-compound --version
+npx asset-compound --help
+```
+
+完整来源、校验和离线使用方式见 `artifacts/README.zh-CN.md`。生成当前外层包时应将
+`npm pack` 输出到仓库外的临时目录，不得把 `0.1.1` tarball 放入 `artifacts/`，
+以免递归打包。
 
 ESM 库入口：
 
