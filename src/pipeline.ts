@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -32,6 +32,10 @@ import type {
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const GIT_PATCH_CAPTURE_BYTES = 128 * 1024;
+const GIT_PATCH_OUTPUT_CHARS = 32_000;
+const GIT_POST_IMAGE_MAX_BYTES = 256 * 1024;
+const GIT_POST_IMAGE_OUTPUT_CHARS = 6_000;
 const OUTPUT_ROOT = "docs/可读化";
 const STANDARD_DOC_OUTPUTS = [
   "docs/README.md",
@@ -98,6 +102,168 @@ export async function currentBranch(repo: string): Promise<string> {
       throw error;
     }
   }
+}
+
+async function gitBounded(
+  repo: string,
+  args: string[],
+  maxBytes: number,
+): Promise<{ output: string; truncated: boolean; totalBytes: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { cwd: repo, stdio: ["ignore", "pipe", "pipe"] });
+    const half = Math.floor(maxBytes / 2);
+    let prefix = Buffer.alloc(0);
+    let suffix = Buffer.alloc(0);
+    let stderr = Buffer.alloc(0);
+    let totalBytes = 0;
+    let truncated = false;
+    child.stdout.on("data", (value: Buffer) => {
+      totalBytes += value.length;
+      if (!truncated) {
+        const combined = Buffer.concat([prefix, value]);
+        if (combined.length <= maxBytes) {
+          prefix = combined;
+          return;
+        }
+        truncated = true;
+        prefix = combined.subarray(0, half);
+        suffix = combined.subarray(combined.length - half);
+        return;
+      }
+      suffix = Buffer.concat([suffix, value]);
+      if (suffix.length > half) suffix = suffix.subarray(suffix.length - half);
+    });
+    child.stderr.on("data", (value: Buffer) => {
+      stderr = Buffer.concat([stderr, value]).subarray(-16_384);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`git ${args[0] ?? ""} 失败：${stderr.toString("utf8").trim()}`));
+        return;
+      }
+      const marker = truncated
+        ? `\n[PATCH_CAPTURE_TRUNCATED totalBytes=${totalBytes}]\n`
+        : "";
+      resolve({
+        output: truncated
+          ? `${prefix.toString("utf8")}${marker}${suffix.toString("utf8")}`
+          : prefix.toString("utf8"),
+        truncated,
+        totalBytes,
+      });
+    });
+  });
+}
+
+interface GitFileChange {
+  status: string;
+  path: string;
+  oldPath?: string;
+}
+
+function parseGitNameStatus(raw: string): GitFileChange[] {
+  const fields = raw.split("\0");
+  const changes: GitFileChange[] = [];
+  for (let index = 0; index < fields.length; ) {
+    const status = fields[index++];
+    if (!status) continue;
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const oldPath = fields[index++];
+      const path = fields[index++];
+      if (oldPath && path) changes.push({ status, oldPath, path });
+      continue;
+    }
+    const path = fields[index++];
+    if (path) changes.push({ status, path });
+  }
+  return changes;
+}
+
+function generatedDocumentationPath(file: string): boolean {
+  const normalized = file.replaceAll("\\", "/");
+  return (
+    normalized === "docs/README.md" ||
+    normalized.startsWith(`${OUTPUT_ROOT}/`) ||
+    /^docs\/(?:0[0-8])-[^/]+(?:\/|$)/u.test(normalized)
+  );
+}
+
+function truncateGitPatch(
+  patch: string,
+  capture: { truncated: boolean; totalBytes: number },
+  maxChars = GIT_PATCH_OUTPUT_CHARS,
+): string {
+  if (patch.length <= maxChars && !capture.truncated) return patch.trimEnd();
+  const firstBudget = Math.floor(maxChars * 0.62);
+  const firstCut = patch.lastIndexOf("\n", firstBudget);
+  const head = patch.slice(0, firstCut > 0 ? firstCut : firstBudget).trimEnd();
+  const remaining = Math.max(1_000, maxChars - head.length - 160);
+  const lastHunk = patch.lastIndexOf("\n@@ ");
+  let tail = "";
+  if (lastHunk >= head.length) {
+    tail = patch.slice(lastHunk + 1);
+    if (tail.length > remaining) {
+      const cut = tail.lastIndexOf("\n", remaining);
+      tail = tail.slice(0, cut > 0 ? cut : remaining);
+    }
+  }
+  const marker =
+    `[PATCH_TRUNCATED originalChars=${patch.length}` +
+    ` capturedBytes=${capture.totalBytes} completeCapture=${String(!capture.truncated)}]`;
+  return [head, marker, tail.trimEnd()].filter(Boolean).join("\n");
+}
+
+function postImageRanges(patch: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const match of patch.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gmu)) {
+    const line = Number(match[1]);
+    const count = match[2] === undefined ? 1 : Number(match[2]);
+    if (!Number.isFinite(line) || !Number.isFinite(count) || count === 0) continue;
+    ranges.push({ start: Math.max(1, line - 3), end: line + Math.min(count, 20) + 2 });
+  }
+  return ranges;
+}
+
+async function gitPostImage(
+  repo: string,
+  commit: string,
+  file: string,
+  patch: string,
+  status: string,
+): Promise<string> {
+  if (status.startsWith("D")) return "POST_IMAGE_SKIPPED reason=deleted";
+  let size: number;
+  try {
+    size = Number((await git(repo, ["cat-file", "-s", `${commit}:${file}`])).trim());
+  } catch {
+    return "POST_IMAGE_SKIPPED reason=missing-or-non-blob";
+  }
+  if (!Number.isFinite(size) || size > GIT_POST_IMAGE_MAX_BYTES) {
+    return `POST_IMAGE_SKIPPED reason=blob-too-large bytes=${Number.isFinite(size) ? size : "unknown"}`;
+  }
+  const source = await git(repo, ["show", `${commit}:${file}`]);
+  if (source.includes("\0")) return "POST_IMAGE_SKIPPED reason=binary";
+  const lines = source.replaceAll("\r\n", "\n").split("\n");
+  const ranges = postImageRanges(patch).slice(0, 8);
+  if (ranges.length === 0) return "POST_IMAGE_SKIPPED reason=no-text-hunk";
+  const snippets: string[] = [];
+  let used = 0;
+  for (const range of ranges) {
+    const start = Math.min(range.start, lines.length);
+    const end = Math.min(range.end, lines.length);
+    const body = lines
+      .slice(start - 1, end)
+      .map((line, index) => `${start + index}: ${line}`)
+      .join("\n");
+    const block = `POST_IMAGE_BEGIN ${file}@${commit}:L${start}-L${end}\n${body}\nPOST_IMAGE_END`;
+    if (used + block.length > GIT_POST_IMAGE_OUTPUT_CHARS) break;
+    snippets.push(block);
+    used += block.length;
+  }
+  return snippets.length > 0
+    ? snippets.join("\n")
+    : "POST_IMAGE_SKIPPED reason=snippet-budget-exhausted";
 }
 
 export async function assertOutputPath(repo: string, target: string): Promise<string> {
@@ -240,21 +406,100 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
     ...STANDARD_DOC_OUTPUTS.map((entry) =>
       `:(exclude)${entry.endsWith("/") ? `${entry}**` : entry}`),
   ]);
-  const records = output
+  const commits = output
     .split("\0")
     .map((record) => record.trim())
-    .filter(Boolean)
-    .map((record) => {
-      const [commit = "", subject = "", body = "", authoredEpoch = ""] = record.split("\x1f");
-      const content = [subject, body, authoredEpoch].filter(Boolean).join("\n");
-      return {
-        sourceType: "git" as const,
-        sourceRef: `git:${commit}`,
+    .filter(Boolean);
+  const records: ScanRecord[] = [];
+  for (const record of commits) {
+    const [commit = "", subject = "", body = "", authoredEpoch = ""] = record.split("\x1f");
+    const ancestry = (await git(repo, ["rev-list", "--parents", "-n", "1", commit])).split(" ");
+    const firstParent = ancestry[1];
+    const nameStatus = firstParent
+      ? await git(repo, [
+          "diff",
+          "--name-status",
+          "-z",
+          "--find-renames",
+          firstParent,
+          commit,
+          "--",
+        ])
+      : await git(repo, [
+          "diff-tree",
+          "--root",
+          "--no-commit-id",
+          "--name-status",
+          "-r",
+          "-z",
+          "--find-renames",
+          commit,
+        ]);
+    const changes = parseGitNameStatus(nameStatus).filter(
+      (change) =>
+        !generatedDocumentationPath(change.path) ||
+        (change.oldPath !== undefined && !generatedDocumentationPath(change.oldPath)),
+    );
+    for (const change of changes) {
+      if (
+        redactSensitive(change.path) !== change.path ||
+        (change.oldPath !== undefined && redactSensitive(change.oldPath) !== change.oldPath)
+      ) {
+        throw new Error(`拒绝包含敏感信息的 Git 来源路径：${change.path}`);
+      }
+      const pathspecs = [change.oldPath, change.path]
+        .filter((file): file is string => file !== undefined)
+        .map((file) => `:(literal)${file}`);
+      const patchArgs = firstParent
+        ? [
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--find-renames",
+            "--unified=3",
+            firstParent,
+            commit,
+            "--",
+            ...pathspecs,
+          ]
+        : [
+            "show",
+            "--format=",
+            "--no-color",
+            "--no-ext-diff",
+            "--find-renames",
+            "--unified=3",
+            commit,
+            "--",
+            ...pathspecs,
+          ];
+      const capture = await gitBounded(repo, patchArgs, GIT_PATCH_CAPTURE_BYTES);
+      const patch = truncateGitPatch(capture.output, capture);
+      const postImage = await gitPostImage(repo, commit, change.path, capture.output, change.status);
+      const content = [
+        `GIT_COMMIT\t${commit}`,
+        `GIT_FILE\t${change.path}`,
+        ...(change.oldPath ? [`GIT_OLD_PATH\t${change.oldPath}`] : []),
+        `GIT_STATUS\t${change.status}`,
+        `GIT_SUBJECT\t${subject}`,
+        "GIT_BODY_BEGIN",
+        body,
+        "GIT_BODY_END",
+        `GIT_AUTHORED_EPOCH\t${authoredEpoch}`,
+        "PATCH_BEGIN",
+        patch,
+        "PATCH_END",
+        postImage,
+      ].join("\n");
+      records.push({
+        sourceType: "git",
+        sourceRef: `git:${commit}:${change.path}`,
         sourceRevision: commit,
         contentHash: sha256(content),
         content,
-      };
-    });
+      });
+    }
+  }
   if (records.length === 0) throw new Error("Git 历史来源为空");
   return records;
 }
@@ -288,7 +533,7 @@ export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[
 function titleFor(record: ScanRecord): string {
   const content = redactSensitive(record.content);
   if (record.sourceType === "git") {
-    return content.split("\n")[0]?.trim() || record.sourceRevision.slice(0, 12);
+    return content.match(/^GIT_SUBJECT\t(.+)$/m)?.[1]?.trim() || record.sourceRevision.slice(0, 12);
   }
   const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return heading || path.basename(record.sourceRef, path.extname(record.sourceRef));

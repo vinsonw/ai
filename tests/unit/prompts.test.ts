@@ -18,6 +18,11 @@ describe("AI 小上下文提示契约", () => {
       "当前 shard 结构与 CLI `validate` 是唯一 schema 权威",
       "`summary`：至少 20 个字符",
       "evidence 必须引用或紧密复述",
+      "先读 diff",
+      "文件路径@commit + @@ hunk 定位",
+      "提交消息只能提示意图",
+      "禁止打开全仓或完整大文件",
+      "PATCH_TRUNCATED",
       "只有 exit 0",
       "2.1、2.2、R1–R6、V1–V8",
     ]) {
@@ -40,6 +45,9 @@ describe("AI 小上下文提示契约", () => {
       expect(prompt).toContain("R1–R6");
       expect(prompt).toContain("V1–V8");
       expect(prompt).toContain("zero diff");
+      expect(prompt).toContain("提交消息不能替代代码证据");
+      expect(prompt).toContain("文件路径@commit + @@ hunk 定位");
+      expect(prompt).toContain("禁止打开全仓或完整大文件");
     }
   });
 
@@ -50,6 +58,9 @@ describe("AI 小上下文提示契约", () => {
     expect(protocol).toContain("唯一输出");
     expect(protocol).toContain("禁止改源码");
     expect(protocol).toContain("sourceExcerpt");
+    expect(protocol).toContain("先读 diff");
+    expect(protocol).toContain("文件路径@commit + @@ hunk 定位");
+    expect(protocol).toContain("不向模型灌入全仓或完整大文件");
     expect(protocol).toContain("R1–R6");
     expect(protocol).toContain("V1–V8");
   });

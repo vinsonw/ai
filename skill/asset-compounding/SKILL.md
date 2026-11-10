@@ -25,6 +25,11 @@ description: 在当前 Git 项目启动小上下文资产复利队列，逐片�
 不得改源码、原始 docs、配置、manifest 或其他 shard；不要把全部 shard 同时加载
 到上下文。不要为了“完整”而读取被截断来源的全量正文；缺失信息写入 gaps。
 
+Git 片必须先读 diff：先看 `GIT_FILE/GIT_STATUS` 和 `PATCH_BEGIN…PATCH_END`，逐个按
+`@@ ... @@` hunk 提炼；提交消息不能替代代码证据。evidence 必须包含
+`文件路径@commit + @@ hunk 定位`。patch 截断时写入 gaps，禁止打开全仓或完整大文件
+补齐，也不得推断 diff 未显示的调用方或运行结果。
+
 ## 零/低配置规则
 
 - 自动识别当前 Git 根目录和基线分支。

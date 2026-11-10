@@ -17,3 +17,8 @@
 完成，失败只修当前片并重试。没有显式 provider 时这是 editor-assisted 流程，不能
 宣称 CLI 已自动分析。只有标准 docs、2.1、2.2、R1–R6/V1–V8 和 zero diff 全通过
 才能宣称交付成功。provider 凭证只能来自环境变量或 secret store。
+
+Git 片必须先读 diff：先看 `GIT_FILE/GIT_STATUS` 与 `PATCH_BEGIN…PATCH_END`，逐个处理
+`@@ ... @@` hunk；提交消息不能替代代码证据。evidence 必须包含
+`文件路径@commit + @@ hunk 定位`。patch 截断时写 gap，禁止打开全仓或完整大文件补齐，
+也禁止推断 diff 未显示的调用方、运行结果或业务事实。

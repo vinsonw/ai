@@ -81,10 +81,19 @@ function excerpt(content: string, maxChars: number): ShardExcerpt {
   const available = Math.max(0, maxChars - OMITTED.length);
   const start = Math.ceil(available / 2);
   const end = Math.floor(available / 2);
-  const text =
-    available === 0
-      ? safe.slice(0, maxChars)
-      : `${safe.slice(0, start)}${OMITTED}${safe.slice(safe.length - end)}`;
+  const headCut = safe.lastIndexOf("\n", start);
+  const head = safe.slice(0, headCut > 0 ? headCut : start);
+  const lastGitHunk = safe.lastIndexOf("\n@@ ");
+  let tail: string;
+  if (lastGitHunk > head.length && /^GIT_COMMIT\t/mu.test(safe)) {
+    const candidate = safe.slice(lastGitHunk + 1, lastGitHunk + 1 + end);
+    const tailCut = candidate.lastIndexOf("\n");
+    tail = candidate.slice(0, tailCut > 0 ? tailCut : end);
+  } else {
+    const tailStart = safe.indexOf("\n", Math.max(0, safe.length - end));
+    tail = safe.slice(tailStart >= 0 ? tailStart + 1 : safe.length - end);
+  }
+  const text = available === 0 ? safe.slice(0, maxChars) : `${head}${OMITTED}${tail}`;
   return {
     text: text.slice(0, maxChars),
     originalChars: safe.length,
@@ -227,17 +236,20 @@ export async function prepareShards(
   let current: typeof items = [];
   let currentChars = 0;
   for (const item of items) {
+    const budgetedChars = item.sourceExcerpt.truncated
+      ? maxChars
+      : item.sourceExcerpt.excerptChars;
     if (
       current.length > 0 &&
       (current.length >= maxItems ||
-        currentChars + item.sourceExcerpt.excerptChars > maxChars)
+        currentChars + budgetedChars > maxChars)
     ) {
       groups.push(current);
       current = [];
       currentChars = 0;
     }
     current.push(item);
-    currentChars += item.sourceExcerpt.excerptChars;
+    currentChars += budgetedChars;
   }
   if (current.length > 0) groups.push(current);
 

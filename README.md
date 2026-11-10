@@ -3,7 +3,7 @@
 编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，按标准
 `docs/` 分类目录沉淀为可增量、可追溯、可验收的资产。
 
-当前外层源码版本为 `0.1.3`（发布候选，先通过 PR 评审，不在本次工作中发布）。
+当前 npm 公开版本和源码版本均为 `0.1.3`；本次修复先通过 PR 评审，不在本次工作中发布。
 包内固定携带可离线安装、具备本次验收重构功能的 `0.1.2` payload。
 
 ## 最短路径：本地 tgz + 两步交付
@@ -145,7 +145,15 @@ work/
 - 受 `maxChars` 限制的来源摘录；
 - 待增强的结构化 `asset`。
 
-不会把全量扫描内容放入 manifest。超长单资产采用确定性的首尾摘录策略，设置 `truncated: true`、`strategy: "head-tail"`，原始字符数保留在元数据中；最终仍以 `contentHash/sourceRevision` 对当前来源重新核验。
+不会把全量扫描内容放入 manifest。Git 来源按 commit 的变更文件拆分；每条包含
+commit、path、status、文件级 patch/hunk，以及按 hunk 行号截取的少量变更后源码
+语境，不会把全仓或完整大文件交给模型。超长 patch 先按安全上限截断并保留明确标记，
+分片再按完整行、保留 hunk 定位执行确定性首尾摘录，设置 `truncated: true`、
+`strategy: "head-tail"`；最终仍以 `contentHash/sourceRevision` 对当前来源重新核验。
+
+处理 Git 片时必须先读 diff，按 `GIT_FILE/GIT_STATUS` 和逐个 `@@ ... @@` hunk
+提炼；提交消息不能替代代码证据。evidence 应引用 `文件路径@commit + @@ hunk 定位`；
+遇到截断必须写 gap，不能自行打开全仓或完整大文件补齐。
 
 预算：
 

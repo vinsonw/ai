@@ -7,10 +7,13 @@ import {
   currentBranch,
   inspectPipeline,
   loadConfig,
+  prepare,
   runPipeline,
   scan,
   verifyGitScope,
 } from "../../src/pipeline.js";
+import { prepareShards } from "../../src/shards.js";
+import type { AssetShard } from "../../src/types.js";
 import { writeLegacyAssets } from "../helpers.js";
 
 const temporary: string[] = [];
@@ -56,11 +59,81 @@ describe("incremental pipeline", () => {
     const gitRecords = records.filter((record) => record.sourceType === "git");
     expect(gitRecords.length).toBeGreaterThan(0);
     for (const record of gitRecords) {
-      const commit = record.sourceRef.slice("git:".length);
+      const commit = record.content.match(/^GIT_COMMIT\t(.+)$/m)?.[1];
+      const authoredEpoch = record.content.match(/^GIT_AUTHORED_EPOCH\t(.+)$/m)?.[1];
+      expect(commit).toBeDefined();
+      if (!commit) throw new Error("Git record is missing GIT_COMMIT");
       const expected = await git(repo, ["log", "-1", "--format=%at", commit]);
-      expect(record.content.split("\n").at(-1)).toBe(expected);
+      expect(authoredEpoch).toBe(expected);
       expect(expected).toMatch(/^\d+$/);
     }
+  });
+
+  it("captures real file-level Git patches, hunks, bounded post-images, and truncation", async () => {
+    const repo = await createRepository();
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    const first = Array.from({ length: 32 }, (_, index) => `export const line${index + 1} = ${index + 1};`);
+    await writeFile(path.join(repo, "src/alpha.ts"), `${first.join("\n")}\n`, "utf8");
+    await writeFile(path.join(repo, "src/beta.ts"), "export const beta = 'before';\n", "utf8");
+    await git(repo, ["add", "src"]);
+    await git(repo, ["commit", "-m", "test: add source baseline"]);
+
+    first[3] = "export const line4 = 'changed-near-start';";
+    first[27] = "export const line28 = 'changed-near-end';";
+    await writeFile(path.join(repo, "src/alpha.ts"), `${first.join("\n")}\n`, "utf8");
+    await writeFile(path.join(repo, "src/beta.ts"), "export const beta = 'after';\n", "utf8");
+    await writeFile(
+      path.join(repo, "src/large.ts"),
+      `${Array.from({ length: 8_000 }, (_, index) => `export const generated${index} = ${index};`).join("\n")}\n`,
+      "utf8",
+    );
+    await git(repo, ["add", "src"]);
+    await git(repo, ["commit", "-m", "feat: change two files and add a large source"]);
+    const commit = await git(repo, ["rev-parse", "HEAD"]);
+
+    const records = await scan(repo, await loadConfig(path.join(repo, "run.yaml")));
+    const changed = records.filter(
+      (record) => record.sourceType === "git" && record.sourceRevision === commit,
+    );
+    expect(changed.map((record) => record.content.match(/^GIT_FILE\t(.+)$/m)?.[1]).sort()).toEqual([
+      "src/alpha.ts",
+      "src/beta.ts",
+      "src/large.ts",
+    ]);
+    const alpha = changed.find((record) => record.sourceRef.endsWith(":src/alpha.ts"));
+    expect(alpha?.content).toContain(`GIT_COMMIT\t${commit}`);
+    expect(alpha?.content).toContain("GIT_STATUS\tM");
+    expect(alpha?.content).toContain("PATCH_BEGIN");
+    expect(alpha?.content).toContain("@@ -1,7 +1,7 @@");
+    expect(alpha?.content).toContain("@@ -25,7 +25,7 @@");
+    expect(alpha?.content).toContain(`POST_IMAGE_BEGIN src/alpha.ts@${commit}:L1-L10`);
+    expect(alpha?.content).toContain("4: export const line4 = 'changed-near-start';");
+    expect(alpha?.content).not.toContain("GIT_SUBJECT\tfixture: synthetic baseline");
+
+    const large = changed.find((record) => record.sourceRef.endsWith(":src/large.ts"));
+    expect(large?.content).toContain("PATCH_TRUNCATED");
+    expect(large?.content).toContain("completeCapture=false");
+    expect(large?.content).toContain("@@ -0,0 +1,8000 @@");
+    expect(large!.content.length).toBeLessThan(40_000);
+
+    const work = path.join(path.dirname(repo), `${path.basename(repo)}-git-shards`);
+    temporary.push(work);
+    const prepared = await prepareShards(records, prepare(records, null), work, {
+      maxChars: 1_200,
+      maxItems: 1,
+    });
+    const shards = await Promise.all(
+      prepared.pendingShards.map(async (file) =>
+        JSON.parse(await readFile(file, "utf8")) as AssetShard,
+      ),
+    );
+    const largeShard = shards.find((shard) =>
+      shard.items[0]?.provenance.sourceRef.endsWith(":src/large.ts"),
+    );
+    expect(largeShard?.items[0]?.sourceExcerpt.truncated).toBe(true);
+    expect(largeShard?.items[0]?.sourceExcerpt.text).toContain("GIT_FILE\tsrc/large.ts");
+    expect(largeShard?.items[0]?.sourceExcerpt.text).toContain("@@ -0,0 +1,8000 @@");
+    expect(largeShard?.items[0]?.sourceExcerpt.text.length).toBeLessThanOrEqual(1_200);
   });
 
   it("rejects source globs that escape the repository", async () => {
