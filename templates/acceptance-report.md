@@ -1,8 +1,8 @@
 # 资产复利验收报告
 
-- Run：`{{run_id}}`
+- 运行 ID：`{{run_id}}`
 - 分支：`{{branch}}`
-- Base / Head：`{{base_sha}}` / `{{head_sha}}`
+- 基线提交 / 当前提交：`{{base_sha}}` / `{{head_sha}}`
 - 来源：{{source_type_summary}}
 - 统计：新增 {{new_count}}，增量 {{updated_count}}，未变 {{unchanged_count}}，冲突 {{conflict_count}}
 

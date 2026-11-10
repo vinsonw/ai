@@ -37,8 +37,8 @@ describe("output boundary", () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "asset-boundary-"));
     temporary.push(repo);
     await expect(assertOutputPath(repo, "docs/可读化/index.md")).resolves.toContain("index.md");
-    await expect(assertOutputPath(repo, "src/index.ts")).rejects.toThrow("outside");
-    await expect(assertOutputPath(repo, "docs/可读化/../../package.json")).rejects.toThrow("outside");
+    await expect(assertOutputPath(repo, "src/index.ts")).rejects.toThrow("之外");
+    await expect(assertOutputPath(repo, "docs/可读化/../../package.json")).rejects.toThrow("之外");
   });
 
   it("rejects a symlink inside the output path", async () => {
@@ -48,6 +48,6 @@ describe("output boundary", () => {
     await mkdir(external, { recursive: true });
     await symlink(external, path.join(repo, "docs", "可读化"));
     temporary.push(repo, external);
-    await expect(assertOutputPath(repo, "docs/可读化/index.md")).rejects.toThrow("symlink");
+    await expect(assertOutputPath(repo, "docs/可读化/index.md")).rejects.toThrow("符号链接");
   });
 });

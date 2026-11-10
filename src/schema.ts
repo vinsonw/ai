@@ -170,6 +170,6 @@ export function assertValid<T>(
       .map((error) => `${error.instancePath || "/"} ${error.message}`)
       .sort()
       .join("; ");
-    throw new Error(`${label} failed schema validation: ${details}`);
+    throw new Error(`${label} 未通过 schema 校验：${details}`);
   }
 }

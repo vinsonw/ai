@@ -46,7 +46,7 @@ sourceSets:
       "utf8",
     );
     await expect(scan(repo, await loadConfig(configPath))).rejects.toThrow(
-      "outside repository",
+      "仓库之外",
     );
   });
 
@@ -76,8 +76,27 @@ sourceSets:
       path.join(repo, "docs/可读化/evidence/acceptance-report.md"),
       "utf8",
     );
+    const index = await readFile(path.join(repo, "docs/可读化/index.md"), "utf8");
+    const firstAsset = await readFile(
+      path.join(repo, `docs/可读化/assets/${first.assets[0]!.assetId.slice(7)}.md`),
+      "utf8",
+    );
+    const runRecordPath = first.changedFiles.find((file) => file.includes("/runs/"));
+    expect(runRecordPath).toBeDefined();
+    const runRecord = await readFile(path.join(repo, runRecordPath!), "utf8");
+
+    expect(report).toContain("资产复利验收报告");
     expect(report).toContain("R1–R6");
     expect(report).toContain("V1–V8");
+    expect(index).toContain("资产复利索引");
+    expect(index).toMatch(/需求|设计|Git 历史/);
+    expect(firstAsset).toContain("## 四维分析");
+    expect(firstAsset).toContain("### 完整性：");
+    expect(firstAsset).toContain("来源版本（sourceRevision）");
+    expect(firstAsset).toContain("内容指纹（contentHash）");
+    expect(firstAsset).not.toMatch(/### 完整性：(ready|partial|missing|conflict)/);
+    expect(runRecord).toContain("# 运行记录");
+    expect(runRecord).toContain("- 当前提交：");
   });
 
   it("detects manual edits instead of overwriting them", async () => {

@@ -22,29 +22,55 @@ function print(value: unknown): void {
 
 function withCommonOptions(command: Command): Command {
   return command
-    .requiredOption("--repo <path>", "target Git repository")
-    .requiredOption("--config <path>", "YAML run configuration");
+    .requiredOption("--repo <path>", "目标 Git 仓库")
+    .requiredOption("--config <path>", "YAML 运行配置");
 }
 
 async function main(): Promise<void> {
+  const titleMap: Record<string, string> = {
+    "Usage:": "用法：",
+    "Arguments:": "参数：",
+    "Options:": "选项：",
+    "Global Options:": "全局选项：",
+    "Commands:": "命令：",
+  };
   const program = new Command()
     .name("asset-compound")
-    .description("Build incremental, traceable assets under docs/可读化")
-    .version("0.1.0");
+    .description("在 docs/可读化 下生成可增量、可追溯的资产")
+    .usage("[选项] <命令>")
+    .version("0.1.0", "-V, --version", "显示版本")
+    .helpOption("-h, --help", "显示帮助")
+    .addHelpCommand("help [command]", "显示指定命令的帮助")
+    .showHelpAfterError("（使用 --help 查看帮助）")
+    .configureHelp({
+      styleTitle: (title) => titleMap[title] ?? title,
+      subcommandTerm: (command) =>
+        command.name() === "help" ? "help [命令]" : `${command.name()} [选项]`,
+    })
+    .configureOutput({
+      outputError: (text, write) =>
+        write(
+          text
+            .replace(/^error:/gm, "错误：")
+            .replace(/required option '([^']+)' not specified/g, "缺少必填选项 '$1'")
+            .replace(/unknown command '([^']+)'/g, "未知命令 '$1'")
+            .replace(/unknown option '([^']+)'/g, "未知选项 '$1'"),
+        ),
+    });
 
   withCommonOptions(
-    program.command("plan").description("validate inputs and print the execution plan"),
+    program.command("plan").description("校验输入并输出执行计划"),
   ).action(async (options: CommonOptions) => print(await plan(options.repo, options.config)));
 
   withCommonOptions(
-    program.command("scan").description("discover and fingerprint configured sources"),
+    program.command("scan").description("发现配置来源并计算内容指纹"),
   ).action(async (options: CommonOptions) => {
     const config = await loadConfig(options.config);
     print(await scan(options.repo, config));
   });
 
   withCommonOptions(
-    program.command("prepare").description("emit schema-valid assets without writing"),
+    program.command("prepare").description("输出通过 schema 的资产，不写入目标仓库"),
   ).action(async (options: CommonOptions) => {
     const prepared = await inspectPipeline(options.repo, options.config);
     print(prepared.assets);
@@ -52,8 +78,8 @@ async function main(): Promise<void> {
 
   program
     .command("validate")
-    .description("validate enriched four-dimension asset JSON")
-    .requiredOption("--input <path>", "JSON array produced from prepare")
+    .description("校验补充后的四维资产 JSON")
+    .requiredOption("--input <path>", "由 prepare 生成并补充的 JSON 数组")
     .action(async (options: { input: string }) =>
       print({ valid: true, count: (await loadAssetsFile(options.input)).length }),
     );
@@ -61,17 +87,17 @@ async function main(): Promise<void> {
   withCommonOptions(
     program
       .command("render")
-      .description("run the complete pipeline and render docs")
-      .option("--assets <path>", "validated enriched asset JSON"),
+      .description("执行完整管线并渲染文档")
+      .option("--assets <path>", "已校验的补充资产 JSON"),
   ).action(async (options: CommonOptions) =>
     print(await runPipeline(options.repo, options.config, options.assets)),
   );
 
   program
     .command("verify")
-    .description("verify that worktree changes stay under docs/可读化")
-    .requiredOption("--repo <path>", "target Git repository")
-    .option("--config <path>", "also prove an unchanged second run")
+    .description("验证工作树改动仅位于 docs/可读化")
+    .requiredOption("--repo <path>", "目标 Git 仓库")
+    .option("--config <path>", "同时证明无变化二次运行")
     .action(async (options: Pick<CommonOptions, "repo"> & { config?: string }) => {
       if (options.config) {
         print(await verifySecondRun(options.repo, options.config));
@@ -83,8 +109,8 @@ async function main(): Promise<void> {
   withCommonOptions(
     program
       .command("finalize")
-      .description("run, verify, and print the final result")
-      .option("--assets <path>", "validated enriched asset JSON"),
+      .description("执行、验证并输出最终结果")
+      .option("--assets <path>", "已校验的补充资产 JSON"),
   ).action(async (options: CommonOptions) =>
     print(await runPipeline(options.repo, options.config, options.assets)),
   );
@@ -92,8 +118,8 @@ async function main(): Promise<void> {
   withCommonOptions(
     program
       .command("run")
-      .description("alias for finalize")
-      .option("--assets <path>", "validated enriched asset JSON"),
+      .description("finalize 的别名")
+      .option("--assets <path>", "已校验的补充资产 JSON"),
   ).action(async (options: CommonOptions) =>
     print(await runPipeline(options.repo, options.config, options.assets)),
   );
@@ -103,6 +129,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`asset-compound: ${message}\n`);
+  process.stderr.write(`asset-compound：${message}\n`);
   process.exitCode = 1;
 });

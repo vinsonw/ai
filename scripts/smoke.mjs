@@ -63,7 +63,7 @@ try {
   process.stdout.write(
     `${JSON.stringify(
       {
-        fixture: "synthetic; not acceptance data",
+        fixture: "合成测试数据；不得作为验收数据",
         first: first.counts,
         second: second.counts,
         secondRunZeroDiff: true,

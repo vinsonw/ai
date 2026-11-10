@@ -1,19 +1,21 @@
-# Asset Compounding Skill + CLI
+# 资产复利 Cursor Skill + CLI
 
-Installable Cursor Skill and Node.js 20+ / TypeScript CLI for turning real project materials into incremental, traceable assets under `docs/可读化/`.
+可安装的 Cursor Skill 与 Node.js 20+ / TypeScript CLI，用于把真实项目材料沉淀为 `docs/可读化/` 下可增量、可追溯、可验收的资产。
 
-## What it guarantees
+## 能力与边界
 
-- Requires at least two distinct, non-empty source types.
-- Supports requirement, design, AI-artifact files and Git history.
-- Produces stable SHA-256 IDs, source revisions, four-dimension analysis, incremental state, conflict reports, and an acceptance report.
-- Refuses writes outside `docs/可读化/**` and refuses to follow output symlinks.
-- Detects manual edits to generated assets instead of overwriting them.
-- A second run with unchanged inputs performs zero business writes.
+- 强制至少两种不同、真实、非空的来源类型。
+- 支持需求、设计、AI 产物等文件来源，以及 Git 历史。
+- 生成稳定 SHA-256 ID、来源 revision、四维分析、增量 state、冲突报告和验收报告。
+- 拒绝写入 `docs/可读化/**` 之外的路径，拒绝跟随输出目录中的符号链接。
+- 检测人工编辑并生成冲突报告，不静默覆盖。
+- 相同输入第二次运行不改业务产物，并输出 `secondRunZeroDiff: true` 证据。
 
-The built-in analysis is a deterministic baseline. A Cursor agent using the Skill can enrich it with domain judgment, but the enriched JSON must satisfy the shipped schemas.
+内置分析是确定性基线。Cursor Agent 可使用 Skill 补充业务判断，但补充后的 JSON 必须通过随包提供的 schema。
 
-## Install
+## 安装
+
+使用 pnpm：
 
 ```bash
 corepack enable
@@ -25,7 +27,7 @@ mkdir -p ~/.cursor/skills
 cp -R skill/asset-compounding ~/.cursor/skills/asset-compounding
 ```
 
-For npm:
+使用 npm：
 
 ```bash
 npm install
@@ -33,9 +35,9 @@ npm run check
 npm link
 ```
 
-## Configuration
+## 配置
 
-Create a run file outside the target repository or in an already tracked operational location:
+在目标仓库之外，或目标仓库已有且受控的运维位置创建运行配置：
 
 ```yaml
 outputRoot: docs/可读化
@@ -54,9 +56,9 @@ exclude:
   - dist/**
 ```
 
-At least two configured types must resolve to real non-empty content. Git history is supported, but an initialization-only commit should not be presented as business acceptance evidence.
+至少两种配置类型必须解析到真实、非空且有业务意义的内容。Git 历史可作为来源，但只有初始化提交时，不得把它包装成业务验收数据。
 
-## Commands
+## 命令
 
 ```bash
 asset-compound plan --repo /path/to/project --config /path/to/run.yaml
@@ -68,22 +70,47 @@ asset-compound verify --repo /path/to/project --config /path/to/run.yaml
 asset-compound finalize --repo /path/to/project --config /path/to/run.yaml
 ```
 
-`render`, `finalize`, and `run` execute the complete deterministic chain. `plan`, `scan`, `prepare`, and `verify` are read-only inspection stages; `verify --config` emits the V6 `secondRunZeroDiff` evidence without changing the report or worktree. All commands return JSON on stdout and non-zero on failure.
+`render`、`finalize` 和 `run` 执行完整确定性链路。`plan`、`scan`、`prepare` 和 `verify` 为只读检查阶段；`verify --config` 输出 V6 所需的 `secondRunZeroDiff` 证据，不修改报告或工作树。所有命令在 stdout 输出稳定 JSON，失败时返回非零退出码，因此中文帮助和错误信息不会影响自动化。
 
-## Development
+## 稳定字段中英映射
+
+命令名、代码标识符和 JSON/schema 字段保留英文：
+
+| 稳定字段/枚举 | 中文展示 |
+|---|---|
+| `requirement` / `design` / `ai-artifact` / `git` | 需求 / 设计 / AI 产物 / Git 历史 |
+| `completeness` / `executability` | 完整性 / 可执行性 |
+| `consistency` / `reuseValue` | 一致性 / 复用价值 |
+| `ready` / `partial` / `missing` / `conflict` | 就绪 / 部分满足 / 缺失 / 冲突 |
+| `high` / `medium` / `low` | 高 / 中 / 低 |
+| `new` / `updated` / `unchanged` / `conflicts` | 新增 / 增量 / 未变 / 冲突 |
+| `secondRunZeroDiff` | 第二次运行业务产物零差异 |
+
+## 验收流程
+
+1. 在独立分支运行 `plan`，确认至少两类真实非空来源。
+2. 用 `scan` 和 `prepare` 检查来源、revision、稳定 ID 与四维基线。
+3. 如需业务增强，修改导出的 JSON，运行 `validate` 后再传给 `render --assets`。
+4. 检查 `docs/可读化/` 下的索引、资产页、冲突报告、state 与验收报告。
+5. 使用相同输入运行 `verify --config` 和第二次 `finalize`；要求 `new=0`、`updated=0`、`secondRunZeroDiff=true`，且工作树业务产物零 diff。
+6. 运行项目检查并提交到独立分支，通过 PR 评审回写。
+
+`tests/fixtures/` 下的内容全部是合成测试数据，只用于验证工具行为，严禁作为 V1/V2 的真实验收证据。
+
+## 开发与验证
 
 ```bash
 pnpm run typecheck
 pnpm run test
 pnpm run build
 node dist/cli.js --help
+pnpm run smoke
+pnpm audit --prod
 ```
 
-Tests use synthetic fixtures only. Files under `tests/fixtures/` demonstrate behavior and must never be cited as real V1/V2 acceptance data.
+## 输出
 
-## Output
-
-The CLI writes only:
+CLI 只写入：
 
 ```text
 docs/可读化/
@@ -97,4 +124,4 @@ docs/可读化/
 └── state/
 ```
 
-Use a dedicated branch in the target repository. The CLI validates scope but intentionally does not create branches, commits, pushes, or pull requests.
+必须在目标仓库独立分支运行。CLI 负责验证写入范围，但不会自动创建分支、提交、推送或 PR。

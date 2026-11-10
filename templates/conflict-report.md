@@ -1,6 +1,6 @@
 # 冲突报告
 
-- Run：`{{run_id}}`
+- 运行 ID：`{{run_id}}`
 - 冲突数：{{conflict_count}}
 
 {{conflicts}}

@@ -15,15 +15,32 @@ import {
 import type {
   AssetRecord,
   Conflict,
+  DimensionFinding,
   PipelineResult,
   ReadState,
   RunConfig,
   ScanRecord,
   SourceSet,
+  SourceType,
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_ROOT = "docs/可读化";
+const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
+  requirement: "需求",
+  design: "设计",
+  "ai-artifact": "AI 产物",
+  git: "Git 历史",
+};
+const LEVEL_LABEL: Record<DimensionFinding["level"], string> = {
+  ready: "就绪",
+  partial: "部分满足",
+  missing: "缺失",
+  conflict: "冲突",
+  high: "高",
+  medium: "中",
+  low: "低",
+};
 
 export function sha256(value: string | Buffer): string {
   const normalized =
@@ -61,7 +78,7 @@ export async function assertOutputPath(repo: string, target: string): Promise<st
     relative.startsWith(`..${path.sep}`) ||
     !(relative === OUTPUT_ROOT || relative.startsWith(`${OUTPUT_ROOT}${path.sep}`))
   ) {
-    throw new Error(`Refusing write outside ${OUTPUT_ROOT}: ${target}`);
+    throw new Error(`拒绝写入 ${OUTPUT_ROOT} 之外的路径：${target}`);
   }
 
   let cursor = root;
@@ -70,7 +87,7 @@ export async function assertOutputPath(repo: string, target: string): Promise<st
     if (await exists(cursor)) {
       const stat = await lstat(cursor);
       if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing symlink in output path: ${cursor}`);
+        throw new Error(`拒绝输出路径中的符号链接：${cursor}`);
       }
     }
   }
@@ -95,10 +112,10 @@ export async function atomicWriteIfChanged(
 
 export async function loadConfig(configPath: string): Promise<RunConfig> {
   const value = parseYaml(await readFile(configPath, "utf8")) as unknown;
-  assertValid(validateConfig, value, "run config");
+  assertValid(validateConfig, value, "运行配置");
   const types = new Set(value.sourceSets.map((source) => source.type));
   if (types.size < 2) {
-    throw new Error("V2 requires at least two distinct source types");
+    throw new Error("V2 要求至少两种不同的来源类型");
   }
   return value;
 }
@@ -107,7 +124,7 @@ export async function plan(repo: string, configPath: string) {
   const repoRoot = await realpath(repo);
   const config = await loadConfig(configPath);
   const inside = await git(repoRoot, ["rev-parse", "--is-inside-work-tree"]);
-  if (inside !== "true") throw new Error("Target is not a Git worktree");
+  if (inside !== "true") throw new Error("目标路径不是 Git 工作树");
   return {
     repoRoot,
     outputRoot: config.outputRoot,
@@ -130,7 +147,7 @@ async function scanFileSet(
   excludes: string[],
 ): Promise<ScanRecord[]> {
   if (!source.include?.length) {
-    throw new Error(`${source.type} source requires include globs`);
+    throw new Error(`${SOURCE_TYPE_LABEL[source.type]}来源必须配置 include glob`);
   }
   const files = await fg(source.include, {
     cwd: repo,
@@ -142,12 +159,12 @@ async function scanFileSet(
   });
   files.sort();
   if (files.length === 0) {
-    throw new Error(`${source.type} source is empty`);
+    throw new Error(`${SOURCE_TYPE_LABEL[source.type]}来源为空`);
   }
   return Promise.all(
     files.map(async (file) => {
       if (redactSensitive(file) !== file) {
-        throw new Error(`Refusing sensitive source path: ${file}`);
+        throw new Error(`拒绝包含敏感信息的来源路径：${file}`);
       }
       const root = await realpath(repo);
       const absolute = path.resolve(root, file);
@@ -157,13 +174,13 @@ async function scanFileSet(
         relative === ".." ||
         relative.startsWith(`..${path.sep}`)
       ) {
-        throw new Error(`Refusing source outside repository: ${file}`);
+        throw new Error(`拒绝读取仓库之外的来源：${file}`);
       }
       const stat = await lstat(absolute);
-      if (stat.isSymbolicLink()) throw new Error(`Refusing symlink source: ${file}`);
+      if (stat.isSymbolicLink()) throw new Error(`拒绝符号链接来源：${file}`);
       const resolvedSource = await realpath(absolute);
       if (resolvedSource !== absolute) {
-        throw new Error(`Refusing source that escapes through a symlink: ${file}`);
+        throw new Error(`拒绝通过符号链接逃逸仓库的来源：${file}`);
       }
       const buffer = await readFile(absolute);
       const text = buffer.toString("utf8");
@@ -201,7 +218,7 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
         content,
       };
     });
-  if (records.length === 0) throw new Error("git source is empty");
+  if (records.length === 0) throw new Error("Git 历史来源为空");
   return records;
 }
 
@@ -224,7 +241,7 @@ export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[
   );
   const nonEmptyTypes = new Set(records.map((record) => record.sourceType));
   if (nonEmptyTypes.size < 2) {
-    throw new Error("V2 requires two non-empty real source types");
+    throw new Error("V2 要求至少两类真实且非空的来源");
   }
   return records;
 }
@@ -306,7 +323,7 @@ export function prepare(records: ScanRecord[], previous: ReadState | null): Asse
       },
       writebackKind,
     };
-    assertValid(validateAsset, asset, `asset ${asset.assetId}`);
+    assertValid(validateAsset, asset, `资产 ${asset.assetId}`);
     return asset;
   });
 }
@@ -316,12 +333,12 @@ export async function loadAssetsFile(
   records?: ScanRecord[],
 ): Promise<AssetRecord[]> {
   const value = JSON.parse(await readFile(file, "utf8")) as unknown;
-  if (!Array.isArray(value)) throw new Error("Enriched asset input must be a JSON array");
+  if (!Array.isArray(value)) throw new Error("增强资产输入必须是 JSON 数组");
   const assets = value.map((candidate, index) => {
-    assertValid(validateAsset, candidate, `asset input ${index}`);
+    assertValid(validateAsset, candidate, `资产输入 ${index}`);
     const serialized = JSON.stringify(candidate);
     if (redactSensitive(serialized) !== serialized) {
-      throw new Error(`asset input ${index} contains sensitive data`);
+      throw new Error(`资产输入 ${index} 包含敏感数据`);
     }
     return candidate;
   });
@@ -330,7 +347,7 @@ export async function loadAssetsFile(
     new Set(sourceKeys).size !== assets.length ||
     new Set(assets.map((asset) => asset.assetId)).size !== assets.length
   ) {
-    throw new Error("Enriched asset input contains duplicate sources or asset IDs");
+    throw new Error("增强资产输入包含重复来源或重复资产 ID");
   }
   if (records) {
     const bySource = new Map(
@@ -338,21 +355,21 @@ export async function loadAssetsFile(
     );
     for (const asset of assets) {
       const record = bySource.get(`${asset.sourceType}:${asset.sourceRef}`);
-      if (!record) throw new Error(`Asset source is not in current scan: ${asset.sourceRef}`);
+      if (!record) throw new Error(`资产来源不在本次扫描中：${asset.sourceRef}`);
       if (
         asset.assetId !== sha256(`${record.sourceType}:${record.sourceRef}`) ||
         asset.contentHash !== record.contentHash ||
         asset.sourceRevision !== record.sourceRevision
       ) {
-        throw new Error(`Asset provenance fields were changed: ${asset.sourceRef}`);
+        throw new Error(`资产来源追踪字段被修改：${asset.sourceRef}`);
       }
     }
     if (assets.length !== records.length) {
-      throw new Error("Enriched asset input must contain exactly one asset per scanned source");
+      throw new Error("增强资产输入必须为每个扫描来源提供且仅提供一条资产");
     }
     const expectedSources = new Set(bySource.keys());
     if (sourceKeys.some((key) => !expectedSources.has(key))) {
-      throw new Error("Enriched asset input does not match the current scan");
+      throw new Error("增强资产输入与本次扫描不匹配");
     }
   }
   return assets;
@@ -361,18 +378,18 @@ export async function loadAssetsFile(
 function renderDimension(label: string, finding: AssetRecord["analysis"]["completeness"]): string {
   const bullets = (items: string[]) =>
     items.length ? items.map((item) => `- ${redactSensitive(item)}`).join("\n") : "- 无";
-  return `### ${label}：${finding.level}\n\n**证据**\n${bullets(finding.evidence)}\n\n**缺口**\n${bullets(finding.gaps)}\n\n**建议**\n${bullets(finding.recommendations)}`;
+  return `### ${label}：${LEVEL_LABEL[finding.level]}\n\n**证据**\n${bullets(finding.evidence)}\n\n**缺口**\n${bullets(finding.gaps)}\n\n**建议**\n${bullets(finding.recommendations)}`;
 }
 
 export function renderAsset(asset: AssetRecord): string {
   return `# ${redactSensitive(asset.title)}
 
 - 标记：${asset.writebackKind}
-- 类型：${asset.sourceType}
+- 类型：${SOURCE_TYPE_LABEL[asset.sourceType]}
 - 来源：\`${redactSensitive(asset.sourceRef)}\`
-- Revision：\`${asset.sourceRevision}\`
-- Content hash：\`${asset.contentHash}\`
-- Asset ID：\`${asset.assetId}\`
+- 来源版本（sourceRevision）：\`${asset.sourceRevision}\`
+- 内容指纹（contentHash）：\`${asset.contentHash}\`
+- 资产 ID（assetId）：\`${asset.assetId}\`
 
 ## 摘要
 
@@ -394,10 +411,10 @@ async function readState(repo: string): Promise<ReadState | null> {
   const statePath = path.join(repo, OUTPUT_ROOT, "state/read-state.json");
   if (!(await exists(statePath))) return null;
   const value = JSON.parse(await readFile(statePath, "utf8")) as unknown;
-  assertValid(validateState, value, "read state");
+  assertValid(validateState, value, "读取状态");
   const expected = sha256(JSON.stringify({ ...value, selfHash: "" }, null, 2));
   if (value.selfHash !== expected) {
-    throw new Error("read state selfHash mismatch; refusing to overwrite edited state");
+    throw new Error("读取状态的 selfHash 不匹配；拒绝覆盖已编辑的 state");
   }
   return value;
 }
@@ -406,7 +423,7 @@ function renderIndex(assets: AssetRecord[]): string {
   const rows = assets
     .map(
       (asset) =>
-        `| [${redactSensitive(asset.title)}](assets/${asset.assetId.slice(7)}.md) | ${asset.sourceType} | ${asset.writebackKind} | \`${redactSensitive(asset.sourceRef)}\` |`,
+        `| [${redactSensitive(asset.title)}](assets/${asset.assetId.slice(7)}.md) | ${SOURCE_TYPE_LABEL[asset.sourceType]} | ${asset.writebackKind} | \`${redactSensitive(asset.sourceRef)}\` |`,
     )
     .join("\n");
   return `# 资产复利索引
@@ -430,7 +447,7 @@ async function renderConflicts(runId: string, conflicts: Conflict[]): Promise<st
       : conflicts
     .map(
       (conflict) =>
-        `## ${conflict.assetId}\n\n- 路径：\`${conflict.path}\`\n- 原因：${conflict.reason}\n- 期望 hash：\`${conflict.expectedHash ?? "n/a"}\`\n- 当前 hash：\`${conflict.actualHash ?? "n/a"}\``,
+        `## ${conflict.assetId}\n\n- 路径：\`${conflict.path}\`\n- 原因：${conflict.reason}\n- 期望内容指纹（hash）：\`${conflict.expectedHash ?? "无"}\`\n- 当前内容指纹（hash）：\`${conflict.actualHash ?? "无"}\``,
     )
     .join("\n\n");
   return (await loadTemplate("conflict-report.md"))
@@ -471,7 +488,9 @@ async function renderAcceptance(
     .replaceAll("{{head_sha}}", head)
     .replaceAll(
       "{{source_type_summary}}",
-      [...new Set(result.assets.map((asset) => asset.sourceType))].sort().join(", "),
+      [...new Set(result.assets.map((asset) => SOURCE_TYPE_LABEL[asset.sourceType]))]
+        .sort()
+        .join("、"),
     )
     .replaceAll("{{new_count}}", String(result.counts.new))
     .replaceAll("{{updated_count}}", String(result.counts.updated))
@@ -671,7 +690,7 @@ export async function render(
   };
   const managedContents: Record<string, string> = {
     [`${OUTPUT_ROOT}/README.md`]:
-      "# 可读化资产\n\n从 `index.md` 开始阅读。所有内容均保留来源和 revision。\n",
+      "# 可读化资产\n\n从 `index.md` 开始阅读。所有内容均保留来源和来源版本（revision）。\n",
     [`${OUTPUT_ROOT}/index.md`]: renderIndex(assets),
     [`${OUTPUT_ROOT}/source-manifest.yaml`]: stringifyYaml(manifest),
     [`${OUTPUT_ROOT}/conflicts/${runId}.md`]: await renderConflicts(runId, conflicts),
@@ -682,7 +701,7 @@ export async function render(
       resultBase,
     ),
     [`${OUTPUT_ROOT}/runs/${runId}.md`]:
-      `# Run ${runId}\n\n- Head：\`${head}\`\n- 来源数：${records.length}\n- 新增：${resultBase.counts.new}\n- 增量：${resultBase.counts.updated}\n- 冲突：${conflicts.length}\n`,
+      `# 运行记录 ${runId}\n\n- 当前提交：\`${head}\`\n- 来源数：${records.length}\n- 新增：${resultBase.counts.new}\n- 增量：${resultBase.counts.updated}\n- 未变：${resultBase.counts.unchanged}\n- 冲突：${conflicts.length}\n`,
     [`${OUTPUT_ROOT}/state/asset-index.jsonl`]:
       `${assets.map((asset) => JSON.stringify(asset)).join("\n")}\n`,
   };
@@ -706,7 +725,7 @@ export async function render(
     managedFiles,
   };
   nextState.selfHash = sha256(JSON.stringify({ ...nextState, selfHash: "" }, null, 2));
-  assertValid(validateState, nextState, "next state");
+  assertValid(validateState, nextState, "下一版状态");
 
   for (const [file, content] of Object.entries(managedContents)) {
     await write(file, content);
@@ -735,7 +754,7 @@ export async function verifyGitScope(repo: string): Promise<string[]> {
     (file) => file !== OUTPUT_ROOT && !file.startsWith(`${OUTPUT_ROOT}/`),
   );
   if (outside.length) {
-    throw new Error(`Changes outside ${OUTPUT_ROOT}: ${outside.join(", ")}`);
+    throw new Error(`检测到 ${OUTPUT_ROOT} 之外的改动：${outside.join("、")}`);
   }
   return paths.sort();
 }
@@ -750,7 +769,7 @@ export async function runPipeline(
   const branch = await git(repo, ["branch", "--show-current"]);
   const baseBranch = config.baseBranch ?? "main";
   if (!branch || branch === baseBranch) {
-    throw new Error(`Writes require a dedicated branch; current branch is ${branch || "(detached)"}`);
+    throw new Error(`写入必须使用独立分支；当前分支为 ${branch || "（分离 HEAD）"}`);
   }
   await verifyGitScope(repo);
   const previous = await readState(repo);
@@ -781,25 +800,25 @@ export async function verifySecondRun(repoInput: string, configPath: string) {
   const repo = await realpath(repoInput);
   const config = await loadConfig(configPath);
   const previous = await readState(repo);
-  if (!previous) throw new Error("Second-run verification requires existing state");
+  if (!previous) throw new Error("二次运行验证需要已有 state");
   const records = await scan(repo, config);
   const assets = prepare(records, previous);
   const changed = assets.filter((asset) => asset.writebackKind !== "未变");
   if (changed.length) {
-    throw new Error(`Second run has ${changed.length} new or updated assets`);
+    throw new Error(`第二次运行仍有 ${changed.length} 条新增或增量资产`);
   }
   for (const asset of assets) {
     const state = previous.assets[asset.assetId];
-    if (!state) throw new Error(`Missing state for ${asset.assetId}`);
+    if (!state) throw new Error(`缺少资产状态：${asset.assetId}`);
     const target = await assertOutputPath(repo, state.outputPath);
     if (!(await exists(target)) || sha256(await readFile(target)) !== state.lastGeneratedHash) {
-      throw new Error(`Generated asset differs from state: ${state.outputPath}`);
+      throw new Error(`生成资产与 state 不一致：${state.outputPath}`);
     }
   }
   for (const [managedPath, expectedHash] of Object.entries(previous.managedFiles)) {
     const target = await assertOutputPath(repo, managedPath);
     if (!(await exists(target)) || sha256(await readFile(target)) !== expectedHash) {
-      throw new Error(`Managed output differs from state: ${managedPath}`);
+      throw new Error(`受管输出与 state 不一致：${managedPath}`);
     }
   }
   await verifyGitScope(repo);

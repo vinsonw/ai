@@ -1,0 +1,34 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const cli = path.resolve("src/cli.ts");
+
+function invoke(args: string[]) {
+  return spawnSync(process.execPath, ["--import", "tsx", cli, ...args], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+}
+
+describe("中文 CLI", () => {
+  it("显示中文帮助且保留稳定命令名", () => {
+    const result = invoke(["--help"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("用法：");
+    expect(result.stdout).toContain("选项：");
+    expect(result.stdout).toContain("命令：");
+    expect(result.stdout).toContain("plan [选项]");
+    expect(result.stdout).not.toContain("[options]");
+    expect(result.stdout).toContain("生成可增量、可追溯的资产");
+    expect(result.stdout).toContain("prepare");
+    expect(result.stdout).toContain("finalize");
+  });
+
+  it("将 Commander 参数错误本地化且保持非零退出码", () => {
+    const result = invoke(["plan", "--repo", "."]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("错误：");
+    expect(result.stderr).toContain("缺少必填选项");
+  });
+});
