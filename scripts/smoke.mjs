@@ -56,6 +56,7 @@ try {
   await run("git", ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await run("git", ["config", "user.name", "Asset Smoke"]);
   await run("git", ["config", "user.email", "asset-smoke@example.invalid"]);
+  await run("git", ["config", "commit.gpgsign", "false"]);
   await run("git", ["add", "."]);
   await run("git", ["commit", "-m", "fixture: synthetic smoke baseline"]);
   await run("git", ["checkout", "-b", "asset-compounding/smoke"]);

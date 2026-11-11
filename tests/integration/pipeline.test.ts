@@ -27,6 +27,7 @@ async function createRepository(): Promise<string> {
   await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await git(repo, ["config", "user.name", "Asset Test"]);
   await git(repo, ["config", "user.email", "asset-test@example.invalid"]);
+  await git(repo, ["config", "commit.gpgsign", "false"]);
   await git(repo, ["add", "."]);
   await git(repo, ["commit", "-m", "fixture: synthetic baseline"]);
   await git(repo, ["checkout", "-b", "asset-compounding/test"]);
