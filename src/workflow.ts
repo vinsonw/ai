@@ -28,6 +28,7 @@ const COMMON_REQUIREMENT_GLOBS = [
   "docs/product/**/*.md",
   "requirements/**/*.md",
   "specs/**/*.md",
+  "spec/**/*.md",
 ];
 
 async function exists(target: string): Promise<boolean> {
@@ -93,6 +94,8 @@ export interface StartWorkflowOptions {
   baseBranch?: string;
   maxChars?: number;
   maxItems?: number;
+  maxShards?: number;
+  includeTransactionalCommits?: boolean;
   yes?: boolean;
   provider?: string;
 }
@@ -113,27 +116,35 @@ async function discoverConfig(
   repo: string,
   options: StartWorkflowOptions,
 ): Promise<RunConfig> {
+  const explicitRequirements = Boolean(options.requirements?.length);
   const requested = options.requirements?.length
     ? options.requirements
     : COMMON_REQUIREMENT_GLOBS;
   const found: string[] = [];
+  const unmatched: string[] = [];
   for (const glob of requested) {
-    if (
-      (
-        await fg(glob, {
-          cwd: repo,
-          onlyFiles: true,
-          followSymbolicLinks: false,
-          ignore: ["docs/可读化/**", "node_modules/**", "dist/**", "build/**"],
-        })
-      ).length > 0
-    ) {
-      found.push(glob);
-    }
+    const matches = await fg(glob, {
+      cwd: repo,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      ignore: ["docs/可读化/**", "node_modules/**", "dist/**", "build/**"],
+    });
+    (matches.length > 0 ? found : unmatched).push(glob);
+  }
+  const patternDiagnostics = [
+    `调用 cwd：${path.resolve(options.cwd ?? process.cwd())}`,
+    `扫描 cwd（Git 根目录）：${repo}`,
+    `传入 patterns：${requested.map((glob) => JSON.stringify(glob)).join("、")}`,
+    `零匹配 patterns：${unmatched.map((glob) => JSON.stringify(glob)).join("、") || "无"}`,
+  ].join("\n");
+  if (explicitRequirements && unmatched.length > 0) {
+    throw new Error(
+      `显式 requirement pattern 存在零匹配，已停止以避免静默遗漏来源。\n${patternDiagnostics}`,
+    );
   }
   if (found.length === 0) {
     throw new Error(
-      "未发现常见需求材料。请用最小覆盖参数：asset-compound start --requirements <glob> [--yes]",
+      `未发现常见需求材料。请用最小覆盖参数：asset-compound start --requirements <glob> [--yes]\n${patternDiagnostics}`,
     );
   }
   if (!options.requirements?.length && found.length > 1 && !options.yes) {
@@ -144,9 +155,14 @@ async function discoverConfig(
   return {
     outputRoot: "docs/可读化",
     baseBranch: options.baseBranch ?? (await detectBaseBranch(repo)),
+    maxShards: options.maxShards ?? 10,
     sourceSets: [
       { type: "requirement", include: found },
-      { type: "git", maxCommits: 20 },
+      {
+        type: "git",
+        maxCommits: 20,
+        includeTransactionalCommits: options.includeTransactionalCommits ?? false,
+      },
     ],
     exclude: ["node_modules/**", "dist/**", "build/**", "coverage/**"],
   };
@@ -175,6 +191,13 @@ function taskText(session: WorkflowSession): string {
    hunk 的实际变更；\`POST_IMAGE_BEGIN path@commit:Lx-Ly\` 只能补充变更后局部语境。
 3. 遇到 \`PATCH_TRUNCATED/PATCH_CAPTURE_TRUNCATED\` 必须在 gaps 明确未覆盖内容；
    禁止打开全仓或完整大文件补齐，禁止推断未显示的调用方、运行结果或业务结论。
+
+## 事务性提交边界
+
+manifest/source manifest 中的 \`skippedGitCommits\` 仅是 R1/R6 可追溯证据，不是
+待分析资产。不得为被跳过的依赖/锁文件、工具配置或纯格式化提交补造资产；如确需
+纳入，停止当前 workspace，并要求用户以
+\`--include-transactional-commits\` 新建 workspace 重跑。
 
 ## 唯一输出与 schema
 
@@ -253,9 +276,14 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     if (previousSession.schemaVersion !== 2 || previousSession.repo !== repo) {
       throw new Error("既有 workspace 不是当前验收契约版本；请使用新的 --workspace 重新 start");
     }
-    if (options.config || options.requirements?.length || options.baseBranch) {
+    if (
+      options.config ||
+      options.requirements?.length ||
+      options.baseBranch ||
+      options.includeTransactionalCommits !== undefined
+    ) {
       throw new Error(
-        "resume 不能更改 config、requirements 或 base branch；请使用新的 --workspace",
+        "resume 不能更改 config、requirements、base branch 或事务提交过滤；请使用新的 --workspace",
       );
     }
     config = await loadConfig(configPath);
@@ -263,13 +291,30 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     config = options.config
       ? await loadConfig(options.config)
       : await discoverConfig(repo, options);
+    const transactionalOverride = options.includeTransactionalCommits;
+    config = {
+      ...config,
+      maxShards: options.maxShards ?? config.maxShards ?? 10,
+      sourceSets:
+        transactionalOverride === undefined
+          ? config.sourceSets
+          : config.sourceSets.map((source) =>
+              source.type === "git"
+                ? {
+                    ...source,
+                    includeTransactionalCommits: transactionalOverride,
+                  }
+                : source,
+            ),
+    };
     await assertIndependentBranch(repo, config);
     await writeText(configPath, stringifyYaml(config));
   }
   if (existingManifest) await assertIndependentBranch(repo, config);
   const prepared = await prepareShardPipeline(repo, configPath, shards, {
-    maxChars: options.maxChars ?? existingManifest?.maxChars ?? 12_000,
-    maxItems: options.maxItems ?? existingManifest?.maxItems ?? 1,
+    ...(options.maxChars !== undefined ? { maxChars: options.maxChars } : {}),
+    ...(options.maxItems !== undefined ? { maxItems: options.maxItems } : {}),
+    ...(options.maxShards !== undefined ? { maxShards: options.maxShards } : {}),
     resume: existingManifest !== null,
   });
   const session: WorkflowSession = {

@@ -14,6 +14,12 @@
 出现 `PATCH_TRUNCATED/PATCH_CAPTURE_TRUNCATED` 时必须在 gaps 写明未覆盖内容；
 禁止打开全仓或完整大文件补齐，禁止推断未显示的调用方、运行结果或业务结论。
 
+## 事务性提交边界
+
+manifest/source manifest 中的 `skippedGitCommits` 是 R1/R6 的可追溯证据，
+不是待分析资产。不要为被跳过的 dependency/lockfile、工具配置或纯格式化提交补造资产；
+需要纳入时应停止并要求用 `--include-transactional-commits` 在新 workspace 重跑。
+
 ## 唯一输出与 schema
 
 唯一输出是原地覆盖当前 shard 的纯 JSON。不得创建旁路文件、Markdown 围栏或解释

@@ -57,6 +57,7 @@ export async function initGenericWorkspace(options: InitOptions = {}) {
   };
   const config = `outputRoot: docs/可读化
 baseBranch: ${baseBranch}
+maxShards: 10
 sourceSets:
   - type: requirement
     include:

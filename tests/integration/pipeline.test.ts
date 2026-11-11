@@ -121,6 +121,7 @@ describe("incremental pipeline", () => {
     const prepared = await prepareShards(records, prepare(records, null), work, {
       maxChars: 1_200,
       maxItems: 1,
+      maxShards: 20,
     });
     const shards = await Promise.all(
       prepared.pendingShards.map(async (file) =>
@@ -134,6 +135,116 @@ describe("incremental pipeline", () => {
     expect(largeShard?.items[0]?.sourceExcerpt.text).toContain("GIT_FILE\tsrc/large.ts");
     expect(largeShard?.items[0]?.sourceExcerpt.text).toContain("@@ -0,0 +1,8000 @@");
     expect(largeShard?.items[0]?.sourceExcerpt.text.length).toBeLessThanOrEqual(1_200);
+  });
+
+  it("conservatively filters transactional commits and preserves explainable evidence", async () => {
+    const repo = await createRepository();
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await writeFile(path.join(repo, "src/format.ts"), "export const value = 1;\n", "utf8");
+    await git(repo, ["add", "src/format.ts"]);
+    await git(repo, ["commit", "-m", "feat: add formatting fixture"]);
+
+    await writeFile(path.join(repo, "package-lock.json"), '{"lockfileVersion":3}\n', "utf8");
+    await git(repo, ["add", "package-lock.json"]);
+    await git(repo, ["commit", "-m", "chore(deps): refresh lockfile"]);
+    const dependencyCommit = await git(repo, ["rev-parse", "HEAD"]);
+
+    await writeFile(path.join(repo, "eslint.config.js"), "export default [];\n", "utf8");
+    await git(repo, ["add", "eslint.config.js"]);
+    await git(repo, ["commit", "-m", "chore: configure eslint"]);
+    const toolCommit = await git(repo, ["rev-parse", "HEAD"]);
+
+    await writeFile(path.join(repo, "src/format.ts"), "export   const   value = 1;\n", "utf8");
+    await git(repo, ["add", "src/format.ts"]);
+    await git(repo, ["commit", "-m", "format: normalize whitespace"]);
+    const formatCommit = await git(repo, ["rev-parse", "HEAD"]);
+
+    await writeFile(path.join(repo, "src/checkout.ts"), "export const checkout = true;\n", "utf8");
+    await writeFile(
+      path.join(repo, "package-lock.json"),
+      '{"lockfileVersion":3,"packages":{"checkout":{}}}\n',
+      "utf8",
+    );
+    await git(repo, ["add", "src/checkout.ts", "package-lock.json"]);
+    await git(repo, ["commit", "-m", "feat: add checkout with dependency update"]);
+    const businessCommit = await git(repo, ["rev-parse", "HEAD"]);
+
+    await writeFile(path.join(repo, "src/checkout.ts"), "export const checkout = false;\n", "utf8");
+    await git(repo, ["add", "src/checkout.ts"]);
+    await git(repo, ["commit", "-m", "format: change checkout behavior"]);
+    const semanticFormatCommit = await git(repo, ["rev-parse", "HEAD"]);
+
+    const configPath = path.join(repo, "run.yaml");
+    const inspected = await inspectPipeline(repo, configPath);
+    expect(inspected.skippedGitCommits.map((commit) => commit.commit).sort()).toEqual(
+      [dependencyCommit, formatCommit, toolCommit].sort(),
+    );
+    for (const skipped of inspected.skippedGitCommits) {
+      expect(skipped.treeHash).toMatch(/^[0-9a-f]{40}$/);
+      expect(skipped.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(skipped.reason.length).toBeGreaterThan(8);
+      expect(skipped.files.length).toBeGreaterThan(0);
+    }
+    expect(
+      inspected.records.some(
+        (record) =>
+          record.sourceType === "git" &&
+          record.sourceRevision === businessCommit &&
+          record.sourceRef.endsWith(":src/checkout.ts"),
+      ),
+    ).toBe(true);
+    expect(
+      inspected.records.some(
+        (record) =>
+          record.sourceType === "git" &&
+          record.sourceRevision === semanticFormatCommit &&
+          record.sourceRef.endsWith(":src/checkout.ts"),
+      ),
+    ).toBe(true);
+
+    const work = path.join(path.dirname(repo), `${path.basename(repo)}-transaction-shards`);
+    temporary.push(work);
+    await prepareShards(inspected.records, inspected.assets, work, {
+      maxShards: 20,
+      skippedGitCommits: inspected.skippedGitCommits,
+    });
+    const manifest = JSON.parse(
+      await readFile(path.join(work, "manifest.json"), "utf8"),
+    ) as { skippedGitCommits: Array<{ commit: string; reason: string }> };
+    expect(manifest.skippedGitCommits).toHaveLength(3);
+
+    const assets = await assetsFile(repo, configPath);
+    const result = await runPipeline(repo, configPath, assets);
+    const sourceManifest = await readFile(
+      path.join(repo, "docs/可读化/source-manifest.yaml"),
+      "utf8",
+    );
+    const runPath = result.changedFiles.find((file) => file.includes("/runs/"));
+    expect(runPath).toBeDefined();
+    const runRecord = await readFile(path.join(repo, runPath!), "utf8");
+    expect(sourceManifest).toContain("skippedGitCommits:");
+    expect(sourceManifest).toContain(dependencyCommit);
+    expect(sourceManifest).toContain("dependency-lockfile-only");
+    expect(runRecord).toContain("跳过事务性 Git 提交：3");
+    expect(runRecord).toContain(formatCommit);
+
+    const config = await loadConfig(configPath);
+    const override = {
+      ...config,
+      sourceSets: config.sourceSets.map((source) =>
+        source.type === "git"
+          ? { ...source, includeTransactionalCommits: true }
+          : source,
+      ),
+    };
+    const unfiltered = await scan(repo, override);
+    for (const commit of [dependencyCommit, formatCommit, toolCommit]) {
+      expect(
+        unfiltered.some(
+          (record) => record.sourceType === "git" && record.sourceRevision === commit,
+        ),
+      ).toBe(true);
+    }
   });
 
   it("rejects source globs that escape the repository", async () => {

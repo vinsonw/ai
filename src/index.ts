@@ -53,6 +53,7 @@ export type {
   ShardManifest,
   ShardManifestEntry,
   ShardProvenance,
+  SkippedGitCommit,
   SourceSet,
   SourceState,
   SourceType,

@@ -27,6 +27,7 @@ import type {
   ReadState,
   RunConfig,
   ScanRecord,
+  SkippedGitCommit,
   SourceSet,
   SourceType,
 } from "./types.js";
@@ -187,6 +188,70 @@ function generatedDocumentationPath(file: string): boolean {
     normalized.startsWith(`${OUTPUT_ROOT}/`) ||
     /^docs\/(?:0[0-8])-[^/]+(?:\/|$)/u.test(normalized)
   );
+}
+
+const LOCKFILE = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.lock|composer\.lock|Cargo\.lock|Gemfile\.lock|Pipfile\.lock|poetry\.lock|uv\.lock)$/u;
+const DEPENDENCY_MANIFEST = /(?:^|\/)(?:package\.json|pyproject\.toml|composer\.json|Cargo\.toml|Gemfile)$/u;
+const TOOL_CONFIG = /(?:^|\/)(?:\.editorconfig|\.eslintrc(?:\..+)?|eslint\.config\.[cm]?[jt]s|\.prettierrc(?:\..+)?|prettier\.config\.[cm]?[jt]s|biome\.jsonc?|\.stylelintrc(?:\..+)?|stylelint\.config\.[cm]?[jt]s|\.commitlintrc(?:\..+)?|commitlint\.config\.[cm]?[jt]s|\.lintstagedrc(?:\..+)?|lint-staged\.config\.[cm]?[jt]s|renovate\.json|\.github\/dependabot\.ya?ml)$/u;
+const DEPENDENCY_SUBJECT = /(?:^|[\s:(])(?:deps?|dependencies|dependabot|renovate|bump|upgrade)(?:[\s:)]|$)/iu;
+const FORMATTING_SUBJECT = /(?:^|[\s:(])(?:format|formatting|prettier|eslint(?:\s+--fix)?|lint\s*fix)(?:[\s:)]|$)/iu;
+
+async function classifyTransactionalCommit(
+  repo: string,
+  commit: string,
+  firstParent: string | undefined,
+  subject: string,
+  changes: GitFileChange[],
+): Promise<Omit<SkippedGitCommit, "treeHash" | "contentHash" | "subject" | "files"> | null> {
+  const files = changes.flatMap((change) => [change.oldPath, change.path].filter(Boolean)) as string[];
+  if (files.length === 0) return null;
+  if (files.every((file) => LOCKFILE.test(file))) {
+    return {
+      commit,
+      reasonCode: "dependency-lockfile-only",
+      reason: "仅变更依赖锁文件，不包含业务代码或业务文档",
+    };
+  }
+  if (
+    files.some((file) => LOCKFILE.test(file)) &&
+    files.every((file) => LOCKFILE.test(file) || DEPENDENCY_MANIFEST.test(file)) &&
+    DEPENDENCY_SUBJECT.test(subject)
+  ) {
+    return {
+      commit,
+      reasonCode: "dependency-lockfile-only",
+      reason: "依赖意图提交仅变更依赖清单与锁文件，不包含业务代码",
+    };
+  }
+  if (files.every((file) => TOOL_CONFIG.test(file))) {
+    return {
+      commit,
+      reasonCode: "tool-config-only",
+      reason: "仅变更已知 lint/format/dependency 工具配置，不包含业务代码",
+    };
+  }
+  if (firstParent && FORMATTING_SUBJECT.test(subject)) {
+    const pathspecs = files.map((file) => `:(literal)${file}`);
+    try {
+      await git(repo, [
+        "diff",
+        "--quiet",
+        "-w",
+        firstParent,
+        commit,
+        "--",
+        ...pathspecs,
+      ]);
+      return {
+        commit,
+        reasonCode: "formatting-only",
+        reason: "提交标题表明格式化，且忽略空白后的文件 diff 为零",
+      };
+    } catch {
+      // 非纯空白变更或 Git 检查失败时保守保留。
+    }
+  }
+  return null;
 }
 
 function truncateGitPatch(
@@ -394,7 +459,10 @@ async function scanFileSet(
   );
 }
 
-async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]> {
+async function scanGitSet(
+  repo: string,
+  source: SourceSet,
+): Promise<{ records: ScanRecord[]; skippedGitCommits: SkippedGitCommit[] }> {
   const maxCommits = source.maxCommits ?? 20;
   const output = await git(repo, [
     "log",
@@ -411,6 +479,7 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
     .map((record) => record.trim())
     .filter(Boolean);
   const records: ScanRecord[] = [];
+  const skippedGitCommits: SkippedGitCommit[] = [];
   for (const record of commits) {
     const [commit = "", subject = "", body = "", authoredEpoch = ""] = record.split("\x1f");
     const ancestry = (await git(repo, ["rev-list", "--parents", "-n", "1", commit])).split(" ");
@@ -440,6 +509,38 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
         !generatedDocumentationPath(change.path) ||
         (change.oldPath !== undefined && !generatedDocumentationPath(change.oldPath)),
     );
+    if (!source.includeTransactionalCommits) {
+      const classification = await classifyTransactionalCommit(
+        repo,
+        commit,
+        firstParent,
+        subject,
+        changes,
+      );
+      if (classification) {
+        const files = [
+          ...new Set(
+            changes.flatMap((change) =>
+              [change.oldPath, change.path].filter((file): file is string => file !== undefined),
+            ),
+          ),
+        ].sort();
+        const treeHash = await git(repo, ["rev-parse", `${commit}^{tree}`]);
+        const evidence = {
+          commit,
+          treeHash,
+          subject,
+          reasonCode: classification.reasonCode,
+          reason: classification.reason,
+          files,
+        };
+        skippedGitCommits.push({
+          ...evidence,
+          contentHash: sha256(JSON.stringify(evidence)),
+        });
+        continue;
+      }
+    }
     for (const change of changes) {
       if (
         redactSensitive(change.path) !== change.path ||
@@ -500,11 +601,20 @@ async function scanGitSet(repo: string, source: SourceSet): Promise<ScanRecord[]
       });
     }
   }
-  if (records.length === 0) throw new Error("Git 历史来源为空");
-  return records;
+  if (records.length === 0) {
+    const detail =
+      skippedGitCommits.length > 0
+        ? `；${skippedGitCommits.length} 个提交均被判定为事务性内容。若确认它们应作为资产，请用 --include-transactional-commits 在新 workspace 重跑`
+        : "";
+    throw new Error(`Git 历史来源为空${detail}`);
+  }
+  return { records, skippedGitCommits };
 }
 
-export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[]> {
+async function scanDetailed(
+  repo: string,
+  config: RunConfig,
+): Promise<{ records: ScanRecord[]; skippedGitCommits: SkippedGitCommit[] }> {
   const excludes = [
     `${OUTPUT_ROOT}/**`,
     ...STANDARD_DOC_OUTPUTS.filter((entry) => entry.endsWith("/")).map((entry) => `${entry}**`),
@@ -517,17 +627,27 @@ export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[
     config.sourceSets.map((source) =>
       source.type === "git"
         ? scanGitSet(repo, source)
-        : scanFileSet(repo, source, excludes),
+        : scanFileSet(repo, source, excludes).then((records) => ({
+            records,
+            skippedGitCommits: [],
+          })),
     ),
   );
-  const records = groups.flat().sort((a, b) =>
+  const records = groups.flatMap((group) => group.records).sort((a, b) =>
     `${a.sourceType}:${a.sourceRef}`.localeCompare(`${b.sourceType}:${b.sourceRef}`),
   );
+  const skippedGitCommits = groups
+    .flatMap((group) => group.skippedGitCommits)
+    .sort((left, right) => left.commit.localeCompare(right.commit));
   const nonEmptyTypes = new Set(records.map((record) => record.sourceType));
   if (nonEmptyTypes.size < 2) {
     throw new Error("V2 要求至少两类真实且非空的来源");
   }
-  return records;
+  return { records, skippedGitCommits };
+}
+
+export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[]> {
+  return (await scanDetailed(repo, config)).records;
 }
 
 function titleFor(record: ScanRecord): string {
@@ -771,16 +891,17 @@ async function renderAcceptance(
   base: string,
   head: string,
   result: Omit<PipelineResult, "changedFiles">,
+  skippedGitCommits: SkippedGitCommit[],
 ): Promise<string> {
   const requirements = [
     "| 条款 | 结果 |",
     "|---|---|",
-    "| R1 识别读取 | 已生成 manifest，仍需人工确认材料范围 |",
+    `| R1 识别读取 | 已生成 manifest；保守排除 ${skippedGitCommits.length} 个事务性 Git 提交并保留 hash/reason |`,
     "| R2 结构化提取 | 已通过 JSON Schema |",
     "| R3 四维分析 | 已生成四维基线，业务结论需人工抽检 |",
     "| R4 增量回写 | 已限制 docs/可读化 并输出冲突报告 |",
     "| R5 增量状态 | 已保存文件 hash 与 commit；需二次运行验证 |",
-    "| R6 全链路留痕 | 已建立来源、revision、asset 与输出映射 |",
+    "| R6 全链路留痕 | 已建立来源、revision、asset 与输出映射；事务提交见 source-manifest |",
   ].join("\n");
   const verification = [
     "| 验收点 | 结果 |",
@@ -824,6 +945,7 @@ export async function render(
   records: ScanRecord[],
   assets: AssetRecord[],
   previous: ReadState | null,
+  skippedGitCommits: SkippedGitCommit[] = [],
 ): Promise<PipelineResult> {
   const head = await git(repo, ["rev-parse", "HEAD"]);
   const branch = await currentBranch(repo);
@@ -894,7 +1016,10 @@ export async function render(
   }
 
   const runId = sha256(
-    records.map((record) => `${record.sourceRef}:${record.contentHash}`).join("\n"),
+    [
+      ...records.map((record) => `${record.sourceRef}:${record.contentHash}`),
+      ...skippedGitCommits.map((commit) => `skipped:${commit.commit}:${commit.contentHash}`),
+    ].join("\n"),
   ).slice(7, 23);
   if (!previous) {
     const firstRunManagedPaths = [
@@ -939,6 +1064,18 @@ export async function render(
     conflicts,
     noOp: changedAssets.length === 0 && conflicts.length === 0 && !hasStaleTransition,
   };
+
+  const manifest = {
+    sourceTypes: [...new Set(records.map((record) => record.sourceType))].sort(),
+    sources: records.map(({ content: _content, ...record }) => record),
+    skippedGitCommits,
+  };
+  const manifestContent = stringifyYaml(manifest);
+  const previousManifestHash = previous?.managedFiles[`${OUTPUT_ROOT}/source-manifest.yaml`];
+  const skippedEvidenceChanged =
+    previousManifestHash !== undefined &&
+    previousManifestHash !== sha256(`${manifestContent.trimEnd()}\n`);
+  resultBase.noOp = resultBase.noOp && !skippedEvidenceChanged;
 
   if (resultBase.noOp) {
     return { ...resultBase, changedFiles: [], secondRunZeroDiff: true };
@@ -997,15 +1134,11 @@ export async function render(
       lastGeneratedHash: sha256(`${content.trimEnd()}\n`),
     };
   }
-  const manifest = {
-    sourceTypes: [...new Set(records.map((record) => record.sourceType))].sort(),
-    sources: records.map(({ content: _content, ...record }) => record),
-  };
   const managedContents: Record<string, string> = {
     [`${OUTPUT_ROOT}/README.md`]:
       "# 可读化资产\n\n从 `index.md` 开始阅读。所有内容均保留来源和来源版本（revision）。\n",
     [`${OUTPUT_ROOT}/index.md`]: renderIndex(assets),
-    [`${OUTPUT_ROOT}/source-manifest.yaml`]: stringifyYaml(manifest),
+    [`${OUTPUT_ROOT}/source-manifest.yaml`]: manifestContent,
     [`${OUTPUT_ROOT}/evidence/effective-config.yaml`]: stringifyYaml(config),
     [`${OUTPUT_ROOT}/conflicts/${runId}.md`]: await renderConflicts(runId, conflicts),
     [`${OUTPUT_ROOT}/evidence/acceptance-report.md`]: await renderAcceptance(
@@ -1013,9 +1146,10 @@ export async function render(
       baseCommit,
       sourceHead,
       resultBase,
+      skippedGitCommits,
     ),
     [`${OUTPUT_ROOT}/runs/${runId}.md`]:
-      `# 运行记录 ${runId}\n\n- 来源提交：\`${sourceHead}\`\n- 来源数：${records.length}\n- 新增：${resultBase.counts.new}\n- 增量：${resultBase.counts.updated}\n- 未变：${resultBase.counts.unchanged}\n- 冲突：${conflicts.length}\n`,
+      `# 运行记录 ${runId}\n\n- 来源提交：\`${sourceHead}\`\n- 来源数：${records.length}\n- 跳过事务性 Git 提交：${skippedGitCommits.length}\n- 新增：${resultBase.counts.new}\n- 增量：${resultBase.counts.updated}\n- 未变：${resultBase.counts.unchanged}\n- 冲突：${conflicts.length}\n\n## 跳过提交证据\n\n${skippedGitCommits.length === 0 ? "- 无" : skippedGitCommits.map((commit) => `- \`${commit.commit}\` / \`${commit.treeHash}\` / \`${commit.contentHash}\`：${commit.reason}（${commit.files.join("、")}）`).join("\n")}\n`,
     [`${OUTPUT_ROOT}/state/asset-index.jsonl`]:
       `${assets.map((asset) => JSON.stringify(asset)).join("\n")}\n`,
   };
@@ -1097,7 +1231,8 @@ export async function runPipeline(
   }
   await verifyGitScope(repo);
   const previous = await readState(repo);
-  const records = await scan(repo, config);
+  const scanned = await scanDetailed(repo, config);
+  const records = scanned.records;
   const baselineAssets = prepare(records, previous);
   if (!assetsFile) {
     throw new Error(
@@ -1111,7 +1246,14 @@ export async function runPipeline(
           baselineAssets.find((baseline) => baseline.assetId === asset.assetId)?.writebackKind ??
           asset.writebackKind,
       }));
-  const result = await render(repo, config, records, assets, previous);
+  const result = await render(
+    repo,
+    config,
+    records,
+    assets,
+    previous,
+    scanned.skippedGitCommits,
+  );
   await verifyGitScope(repo);
   return {
     ...result,
@@ -1129,8 +1271,12 @@ export async function inspectPipeline(repoInput: string, configPath: string) {
   const repo = await realpath(repoInput);
   const config = await loadConfig(configPath);
   const previous = await readState(repo);
-  const records = await scan(repo, config);
-  return { records, assets: prepare(records, previous) };
+  const scanned = await scanDetailed(repo, config);
+  return {
+    records: scanned.records,
+    assets: prepare(scanned.records, previous),
+    skippedGitCommits: scanned.skippedGitCommits,
+  };
 }
 
 export async function prepareShardPipeline(
@@ -1139,8 +1285,15 @@ export async function prepareShardPipeline(
   output: string,
   options: PrepareShardsOptions = {},
 ) {
+  const config = await loadConfig(configPath);
   const inspected = await inspectPipeline(repoInput, configPath);
-  return prepareShards(inspected.records, inspected.assets, output, options);
+  return prepareShards(inspected.records, inspected.assets, output, {
+    ...options,
+    ...(!options.resume && options.maxShards === undefined
+      ? { maxShards: config.maxShards ?? 10 }
+      : {}),
+    skippedGitCommits: inspected.skippedGitCommits,
+  });
 }
 
 export async function verifySecondRun(repoInput: string, configPath: string) {
