@@ -113,27 +113,35 @@ async function discoverConfig(
   repo: string,
   options: StartWorkflowOptions,
 ): Promise<RunConfig> {
+  const explicitRequirements = Boolean(options.requirements?.length);
   const requested = options.requirements?.length
     ? options.requirements
     : COMMON_REQUIREMENT_GLOBS;
   const found: string[] = [];
+  const unmatched: string[] = [];
   for (const glob of requested) {
-    if (
-      (
-        await fg(glob, {
-          cwd: repo,
-          onlyFiles: true,
-          followSymbolicLinks: false,
-          ignore: ["docs/可读化/**", "node_modules/**", "dist/**", "build/**"],
-        })
-      ).length > 0
-    ) {
-      found.push(glob);
-    }
+    const matches = await fg(glob, {
+      cwd: repo,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      ignore: ["docs/可读化/**", "node_modules/**", "dist/**", "build/**"],
+    });
+    (matches.length > 0 ? found : unmatched).push(glob);
+  }
+  const patternDiagnostics = [
+    `调用 cwd：${path.resolve(options.cwd ?? process.cwd())}`,
+    `扫描 cwd（Git 根目录）：${repo}`,
+    `传入 patterns：${requested.map((glob) => JSON.stringify(glob)).join("、")}`,
+    `零匹配 patterns：${unmatched.map((glob) => JSON.stringify(glob)).join("、") || "无"}`,
+  ].join("\n");
+  if (explicitRequirements && unmatched.length > 0) {
+    throw new Error(
+      `显式 requirement pattern 存在零匹配，已停止以避免静默遗漏来源。\n${patternDiagnostics}`,
+    );
   }
   if (found.length === 0) {
     throw new Error(
-      "未发现常见需求材料。请用最小覆盖参数：asset-compound start --requirements <glob> [--yes]",
+      `未发现常见需求材料。请用最小覆盖参数：asset-compound start --requirements <glob> [--yes]\n${patternDiagnostics}`,
     );
   }
   if (!options.requirements?.length && found.length > 1 && !options.yes) {

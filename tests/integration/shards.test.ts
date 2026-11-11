@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   git,
+  loadConfig,
   prepare,
   prepareShardPipeline,
   runPipeline,
@@ -228,6 +229,64 @@ describe("零配置 start/deliver", () => {
     await expect(startWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
       "非验收 fixture",
     );
+  });
+
+  it("显式 requirement patterns 任一零匹配时给出完整诊断", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "asset-requirement-patterns-"));
+    temporary.push(repo);
+    await mkdir(path.join(repo, "docs/requirements"), { recursive: true });
+    await mkdir(path.join(repo, "specs"), { recursive: true });
+    await writeFile(
+      path.join(repo, "docs/requirements/checkout.md"),
+      "# 结账需求\n必须保留成功和失败路径。\n",
+      "utf8",
+    );
+    await writeFile(path.join(repo, "specs/cart.md"), "# 购物车\n总额必须稳定。\n", "utf8");
+    await git(repo, ["init"]);
+    await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await git(repo, ["config", "user.name", "Pattern Test"]);
+    await git(repo, ["config", "user.email", "pattern@example.invalid"]);
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "fixture: requirement pattern diagnostics"]);
+    await git(repo, ["checkout", "-b", "asset-compounding/patterns"]);
+
+    const requested = ["docs/requirements/**/*.md", "missing/**/*.md"];
+    let failure: unknown;
+    try {
+      await startWorkflow({
+        cwd: repo,
+        workspace: path.join(repo, ".git/asset-compound-missing"),
+        requirements: requested,
+        maxChars: 6_000,
+        maxItems: 2,
+        yes: true,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain("显式 requirement pattern 存在零匹配");
+    expect(message).toContain(`调用 cwd：${repo}`);
+    expect(message).toContain(`扫描 cwd（Git 根目录）：${repo}`);
+    expect(message).toContain('传入 patterns："docs/requirements/**/*.md"、"missing/**/*.md"');
+    expect(message).toContain('零匹配 patterns："missing/**/*.md"');
+
+    const started = await startWorkflow({
+      cwd: repo,
+      workspace: path.join(repo, ".git/asset-compound-valid"),
+      requirements: ["docs/requirements/**/*.md", "specs/**/*.md"],
+      maxChars: 6_000,
+      maxItems: 2,
+      yes: true,
+    });
+    const config = await loadConfig(started.effectiveConfig);
+    expect(config.sourceSets[0]?.include).toEqual([
+      "docs/requirements/**/*.md",
+      "specs/**/*.md",
+    ]);
+    expect(started.maxChars).toBe(6_000);
+    expect(started.maxItems).toBe(2);
   });
 
   it("从 React 风格仓库用两条短命令完成 editor-assisted 交付", async () => {
