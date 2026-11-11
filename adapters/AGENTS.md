@@ -22,3 +22,7 @@ Git 片必须先读 diff：先看 `GIT_FILE/GIT_STATUS` 与 `PATCH_BEGIN…PATCH
 `@@ ... @@` hunk；提交消息不能替代代码证据。evidence 必须包含
 `文件路径@commit + @@ hunk 定位`。patch 截断时写 gap，禁止打开全仓或完整大文件补齐，
 也禁止推断 diff 未显示的调用方、运行结果或业务事实。
+
+manifest 的 `skippedGitCommits` 仅用于 R1/R6 追溯，不是待分析资产，禁止补造；
+确需纳入时停止并用 `--include-transactional-commits` 新建 workspace。默认最多
+10 片；预算无法无损容纳时必须失败并调节 maxShards/maxChars/maxItems。

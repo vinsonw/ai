@@ -3,9 +3,8 @@
 编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，按标准
 `docs/` 分类目录沉淀为可增量、可追溯、可验收的资产。
 
-当前 npm 公开版本为 `0.1.3`；本分支准备外层 `0.1.5`，先通过 PR 评审，不在
-本次工作中发布。包内固定携带可离线安装的 `0.1.4` payload；该内层版本专用于
-PR #7 合并后的 diff/hunk/post-image 功能，不得在 registry 发布不同内容。
+当前 npm 公开版本为 `0.1.5`，包内固定携带可离线安装的 `0.1.4` payload。
+本分支只改进后续版本的采集与小上下文协议，不执行 npm publish。
 
 ## 最短路径：本地 tgz + 两步交付
 
@@ -22,7 +21,7 @@ npx asset-compound start --yes
 - 在基线分支或 detached HEAD 上立即失败，避免完成分析后才发现无法独立回写；
 - 发现常见 requirement 路径，默认组合为 `requirement + git` 两类真实来源；
 - 将有效 `run.yaml`、session、manifest 和 shards 放入稳定且不污染工作树的 `.git/asset-compound/`；
-- 默认每片一个资产，来源摘录总预算为 12000 字符；
+- 默认总数至多 10 片，按来源摘录字符预算自动、确定性地平衡资产；
 - 生成 `.git/asset-compound/AI-TASK.md` 和 `retrospective.json`，作为“交给任意
   AI 编辑器执行”的小上下文入口。
 
@@ -99,6 +98,7 @@ docs/requirements/**/*.md
 docs/product/**/*.md
 requirements/**/*.md
 specs/**/*.md
+spec/**/*.md
 ```
 
 - 只找到一组时直接使用。
@@ -117,6 +117,7 @@ npx asset-compound start \
   --workspace /absolute/path/to/stable-workspace \
   --max-chars 6000 \
   --max-items 2 \
+  --max-shards 10 \
   --yes
 ```
 
@@ -156,7 +157,7 @@ commit、path、status、文件级 patch/hunk，以及按 hunk 行号截取的�
 提炼；提交消息不能替代代码证据。evidence 应引用 `文件路径@commit + @@ hunk 定位`；
 遇到截断必须写 gap，不能自行打开全仓或完整大文件补齐。
 
-预算：
+预算（默认 `maxShards=10`、`maxChars=12000`，`maxItems` 自动计算）：
 
 ```bash
 npx asset-compound prepare \
@@ -164,8 +165,19 @@ npx asset-compound prepare \
   --config /path/to/run.yaml \
   --output /path/to/work \
   --max-chars 4000 \
-  --max-items 1
+  --max-items 2 \
+  --max-shards 10
 ```
+
+分组保持全量资产顺序，并在预算内平衡每片大小。若总片数上限、单片字符上限或显式
+单片资产上限无法无损容纳所有资产，命令会 fail-closed，不会丢弃资产/证据；按错误
+提示调整 `--max-shards`、`--max-chars` 或 `--max-items` 后在新 workspace 重试。
+
+默认会保守排除仅含依赖/锁文件、已知 lint/format/tool 配置，或经 `git diff -w`
+确认仅空白变化的事务性提交。`manifest.json`、来源清单和运行报告保留其 commit、
+tree/content hash、文件与原因，供 R1/R6 追溯。混有业务代码的提交不会被排除。
+确需把事务提交作为资产时使用 `start --include-transactional-commits --yes` 新建
+workspace；模型不得把 `skippedGitCommits` 自行补造成资产。
 
 断点续跑：
 

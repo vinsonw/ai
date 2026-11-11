@@ -5,11 +5,13 @@ export interface SourceSet {
   type: SourceType;
   include?: string[];
   maxCommits?: number;
+  includeTransactionalCommits?: boolean;
 }
 
 export interface RunConfig {
   outputRoot: "docs/可读化";
   baseBranch?: string;
+  maxShards?: number;
   sourceSets: SourceSet[];
   exclude?: string[];
 }
@@ -72,6 +74,16 @@ export interface ScanRecord {
   sourceRevision: string;
   contentHash: string;
   content: string;
+}
+
+export interface SkippedGitCommit {
+  commit: string;
+  treeHash: string;
+  contentHash: string;
+  subject: string;
+  reasonCode: "dependency-lockfile-only" | "tool-config-only" | "formatting-only";
+  reason: string;
+  files: string[];
 }
 
 export interface Conflict {
@@ -143,8 +155,11 @@ export interface ShardManifest {
   runFingerprint: string;
   maxChars: number;
   maxItems: number;
+  maxItemsMode?: "auto" | "fixed";
+  maxShards?: number;
   totalAssets: number;
   completedAssets: number;
   assets: ShardProvenance[];
+  skippedGitCommits?: SkippedGitCommit[];
   shards: ShardManifestEntry[];
 }

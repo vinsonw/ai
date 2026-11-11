@@ -12,6 +12,7 @@ import type {
   ShardManifest,
   ShardManifestEntry,
   ShardProvenance,
+  SkippedGitCommit,
 } from "./types.js";
 
 const MANIFEST = "manifest.json";
@@ -122,6 +123,14 @@ async function readManifest(directory: string): Promise<ShardManifest> {
     value.schemaVersion !== 1 ||
     !Array.isArray(value.assets) ||
     !Array.isArray(value.shards) ||
+    (value.maxShards !== undefined &&
+      (!Number.isInteger(value.maxShards) ||
+        value.maxShards < 1 ||
+        value.maxShards > 1_000)) ||
+    (value.maxItemsMode !== undefined &&
+      !["auto", "fixed"].includes(value.maxItemsMode)) ||
+    (value.skippedGitCommits !== undefined &&
+      !Array.isArray(value.skippedGitCommits)) ||
     value.manifestHash !== manifestDigest(value)
   ) {
     throw new Error(`分片 manifest 无效或已被手工修改：${manifestPath}`);
@@ -141,6 +150,8 @@ function shardPath(directory: string, entry: ShardManifestEntry): string {
 export interface PrepareShardsOptions {
   maxChars?: number;
   maxItems?: number;
+  maxShards?: number;
+  skippedGitCommits?: SkippedGitCommit[];
   resume?: boolean;
 }
 
@@ -153,6 +164,8 @@ export interface PrepareShardsResult {
   pendingShards: string[];
   maxChars: number;
   maxItems: number;
+  maxItemsMode: "auto" | "fixed";
+  maxShards: number;
   resumed: boolean;
 }
 
@@ -172,7 +185,127 @@ function resultFor(
       .map((entry) => shardPath(directory, entry)),
     maxChars: manifest.maxChars,
     maxItems: manifest.maxItems,
+    maxItemsMode: manifest.maxItemsMode ?? "fixed",
+    maxShards: manifest.maxShards ?? manifest.shards.length,
     resumed,
+  };
+}
+
+function runFingerprint(
+  records: ScanRecord[],
+  settings: {
+    maxChars: number;
+    maxItems: number;
+    maxItemsMode: "auto" | "fixed";
+    maxShards: number;
+    skippedGitCommits: SkippedGitCommit[];
+  },
+): string {
+  return hash(
+    JSON.stringify({
+      ...settings,
+      sources: records.map(({ content: _content, ...record }) => record),
+    }),
+  );
+}
+
+function legacyRunFingerprint(
+  records: ScanRecord[],
+  maxChars: number,
+  maxItems: number,
+): string {
+  return hash(
+    JSON.stringify({
+      maxChars,
+      maxItems,
+      sources: records.map(({ content: _content, ...record }) => record),
+    }),
+  );
+}
+
+function balancedGroups(
+  items: AssetShard["items"],
+  maxChars: number,
+  requestedMaxItems: number | undefined,
+  maxShards: number,
+): { groups: AssetShard["items"][]; maxItems: number; maxItemsMode: "auto" | "fixed" } {
+  if (items.length === 0) {
+    return {
+      groups: [],
+      maxItems: requestedMaxItems ?? 1,
+      maxItemsMode: requestedMaxItems === undefined ? "auto" : "fixed",
+    };
+  }
+  const weights = items.map((item) =>
+    item.sourceExcerpt.truncated ? maxChars : item.sourceExcerpt.excerptChars,
+  );
+  const itemLimit = requestedMaxItems ?? items.length;
+  const targetGroups = Math.min(maxShards, items.length);
+  const prefix = [0];
+  for (const weight of weights) prefix.push((prefix.at(-1) ?? 0) + weight);
+  const chars = (start: number, end: number) => (prefix[end] ?? 0) - (prefix[start] ?? 0);
+  const memo = new Map<string, boolean>();
+  const canPartition = (start: number, groupsLeft: number): boolean => {
+    const key = `${start}:${groupsLeft}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+    const remaining = items.length - start;
+    if (groupsLeft === 0) return remaining === 0;
+    if (remaining < groupsLeft || remaining > groupsLeft * itemLimit) {
+      memo.set(key, false);
+      return false;
+    }
+    const maxEnd = Math.min(items.length, start + itemLimit);
+    for (let end = start + 1; end <= maxEnd; end += 1) {
+      if (chars(start, end) > maxChars) break;
+      if (canPartition(end, groupsLeft - 1)) {
+        memo.set(key, true);
+        return true;
+      }
+    }
+    memo.set(key, false);
+    return false;
+  };
+  if (!canPartition(0, targetGroups)) {
+    const totalChars = weights.reduce((sum, weight) => sum + weight, 0);
+    throw new Error(
+      [
+        `无法在 maxShards=${maxShards}、maxChars=${maxChars}` +
+          `${requestedMaxItems === undefined ? "" : `、maxItems=${requestedMaxItems}`} 内容纳 ${items.length} 条资产（预算字符 ${totalChars}）。`,
+        "未丢弃任何资产或证据；已拒绝生成不完整分片。",
+        "请提高 --max-shards / 配置 maxShards，或提高 --max-chars；若设置了 --max-items，也可适当提高。",
+      ].join("\n"),
+    );
+  }
+  const groups: AssetShard["items"][] = [];
+  let start = 0;
+  for (let groupsLeft = targetGroups; groupsLeft > 0; groupsLeft -= 1) {
+    const remainingChars = chars(start, items.length);
+    const targetChars = remainingChars / groupsLeft;
+    const targetItems = (items.length - start) / groupsLeft;
+    const candidates: Array<{ end: number; score: number }> = [];
+    const maxEnd = Math.min(items.length, start + itemLimit);
+    for (let end = start + 1; end <= maxEnd; end += 1) {
+      const groupChars = chars(start, end);
+      if (groupChars > maxChars) break;
+      if (!canPartition(end, groupsLeft - 1)) continue;
+      const score =
+        Math.abs(groupChars - targetChars) / Math.max(1, targetChars) +
+        Math.abs(end - start - targetItems) / Math.max(1, targetItems);
+      candidates.push({ end, score });
+    }
+    candidates.sort((left, right) => left.score - right.score || left.end - right.end);
+    const end = candidates[0]?.end;
+    if (end === undefined) throw new Error("内部错误：分片平衡结果不可达");
+    groups.push(items.slice(start, end));
+    start = end;
+  }
+  const effectiveMaxItems =
+    requestedMaxItems ?? Math.max(...groups.map((group) => group.length));
+  return {
+    groups,
+    maxItems: effectiveMaxItems,
+    maxItemsMode: requestedMaxItems === undefined ? "auto" : "fixed",
   };
 }
 
@@ -184,27 +317,45 @@ export async function prepareShards(
 ): Promise<PrepareShardsResult> {
   const directory = path.resolve(output);
   const maxChars = options.maxChars ?? 12_000;
-  const maxItems = options.maxItems ?? 1;
+  const maxShards = options.maxShards ?? 10;
+  const skippedGitCommits = options.skippedGitCommits ?? [];
   if (!Number.isInteger(maxChars) || maxChars < 32) {
     throw new Error("maxChars 必须是至少 32 的整数");
   }
-  if (!Number.isInteger(maxItems) || maxItems < 1) {
+  if (
+    options.maxItems !== undefined &&
+    (!Number.isInteger(options.maxItems) || options.maxItems < 1)
+  ) {
     throw new Error("maxItems 必须是至少 1 的整数");
   }
-  const runFingerprint = hash(
-    JSON.stringify({
-      maxChars,
-      maxItems,
-      sources: records.map(({ content: _content, ...record }) => record),
-    }),
-  );
+  if (!Number.isInteger(maxShards) || maxShards < 1 || maxShards > 1_000) {
+    throw new Error("maxShards 必须是 1 到 1000 的整数");
+  }
   const manifestPath = path.join(directory, MANIFEST);
   if (await exists(manifestPath)) {
     if (!options.resume) {
       throw new Error(`分片目录已存在；中断续跑请使用 --resume：${directory}`);
     }
     const current = await readManifest(directory);
-    if (current.runFingerprint !== runFingerprint) {
+    if (
+      (options.maxChars !== undefined && options.maxChars !== current.maxChars) ||
+      (options.maxItems !== undefined && options.maxItems !== current.maxItems) ||
+      (options.maxShards !== undefined &&
+        options.maxShards !== (current.maxShards ?? current.shards.length))
+    ) {
+      throw new Error("resume 不能更改 maxChars、maxItems 或 maxShards；请使用新的输出目录");
+    }
+    const expectedFingerprint =
+      current.maxShards === undefined
+        ? legacyRunFingerprint(records, current.maxChars, current.maxItems)
+        : runFingerprint(records, {
+            maxChars: current.maxChars,
+            maxItems: current.maxItems,
+            maxItemsMode: current.maxItemsMode ?? "fixed",
+            maxShards: current.maxShards,
+            skippedGitCommits,
+          });
+    if (current.runFingerprint !== expectedFingerprint) {
       throw new Error("来源或预算已变化，不能 resume；请使用新的输出目录重新 prepare");
     }
     for (const entry of current.shards) {
@@ -232,26 +383,15 @@ export async function prepareShards(
       asset,
     };
   });
-  const groups: typeof items[] = [];
-  let current: typeof items = [];
-  let currentChars = 0;
-  for (const item of items) {
-    const budgetedChars = item.sourceExcerpt.truncated
-      ? maxChars
-      : item.sourceExcerpt.excerptChars;
-    if (
-      current.length > 0 &&
-      (current.length >= maxItems ||
-        currentChars + budgetedChars > maxChars)
-    ) {
-      groups.push(current);
-      current = [];
-      currentChars = 0;
-    }
-    current.push(item);
-    currentChars += budgetedChars;
-  }
-  if (current.length > 0) groups.push(current);
+  const balanced = balancedGroups(items, maxChars, options.maxItems, maxShards);
+  const groups = balanced.groups;
+  const fingerprint = runFingerprint(records, {
+    maxChars,
+    maxItems: balanced.maxItems,
+    maxItemsMode: balanced.maxItemsMode,
+    maxShards,
+    skippedGitCommits,
+  });
 
   await mkdir(path.join(directory, SHARDS_DIR), { recursive: true });
   const entries: ShardManifestEntry[] = [];
@@ -273,12 +413,15 @@ export async function prepareShards(
   const manifest: ShardManifest = {
     schemaVersion: 1,
     manifestHash: "",
-    runFingerprint,
+    runFingerprint: fingerprint,
     maxChars,
-    maxItems,
+    maxItems: balanced.maxItems,
+    maxItemsMode: balanced.maxItemsMode,
+    maxShards,
     totalAssets: assets.length,
     completedAssets: 0,
     assets: assets.map(provenance),
+    skippedGitCommits,
     shards: entries,
   };
   manifest.manifestHash = manifestDigest(manifest);
@@ -291,6 +434,7 @@ function assertShard(
   entry: ShardManifestEntry,
   expected: Map<string, ShardProvenance>,
   maxChars: number,
+  maxItems: number,
 ): AssetRecord[] {
   if (
     shard.schemaVersion !== 1 ||
@@ -323,6 +467,9 @@ function assertShard(
   );
   if (excerptChars > maxChars) {
     throw new Error(`分片来源摘录超过 maxChars 预算：${entry.path}`);
+  }
+  if (shard.items.length > maxItems) {
+    throw new Error(`分片资产数超过 maxItems 预算：${entry.path}`);
   }
   return shard.items.map((item) => {
     const excerpt = item.sourceExcerpt;
@@ -397,7 +544,13 @@ async function validateEntry(
   }
   const shard = JSON.parse(raw) as AssetShard;
   const expected = new Map(manifest.assets.map((item) => [item.assetId, item]));
-  const assets = assertShard(shard, entry, expected, manifest.maxChars);
+  const assets = assertShard(
+    shard,
+    entry,
+    expected,
+    manifest.maxChars,
+    manifest.maxItems,
+  );
   entry.status = "completed";
   entry.validatedHash = hash(raw);
   return assets;
@@ -465,6 +618,7 @@ export async function loadShardedDirectory(directoryInput: string): Promise<Asse
         entry,
         new Map(manifest.assets.map((item) => [item.assetId, item])),
         manifest.maxChars,
+        manifest.maxItems,
       ),
     );
   }

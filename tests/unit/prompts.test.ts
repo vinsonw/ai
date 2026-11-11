@@ -23,6 +23,9 @@ describe("AI 小上下文提示契约", () => {
       "提交消息只能提示意图",
       "禁止打开全仓或完整大文件",
       "PATCH_TRUNCATED",
+      "skippedGitCommits",
+      "不是待分析资产",
+      "--include-transactional-commits",
       "只有 exit 0",
       "2.1、2.2、R1–R6、V1–V8",
     ]) {
@@ -48,6 +51,8 @@ describe("AI 小上下文提示契约", () => {
       expect(prompt).toContain("提交消息不能替代代码证据");
       expect(prompt).toContain("文件路径@commit + @@ hunk 定位");
       expect(prompt).toContain("禁止打开全仓或完整大文件");
+      expect(prompt).toContain("skippedGitCommits");
+      expect(prompt).toContain("--include-transactional-commits");
     }
   });
 
@@ -61,6 +66,10 @@ describe("AI 小上下文提示契约", () => {
     expect(protocol).toContain("先读 diff");
     expect(protocol).toContain("文件路径@commit + @@ hunk 定位");
     expect(protocol).toContain("不向模型灌入全仓或完整大文件");
+    expect(protocol).toContain("默认");
+    expect(protocol).toContain("maxShards=10");
+    expect(protocol).toContain("skippedGitCommits");
+    expect(protocol).toContain("不是 AI");
     expect(protocol).toContain("R1–R6");
     expect(protocol).toContain("V1–V8");
   });

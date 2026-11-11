@@ -73,6 +73,7 @@ const configSchema = {
   properties: {
     outputRoot: { const: "docs/可读化" },
     baseBranch: { type: "string", minLength: 1 },
+    maxShards: { type: "integer", minimum: 1, maximum: 1000 },
     sourceSets: {
       type: "array",
       minItems: 2,
@@ -84,6 +85,7 @@ const configSchema = {
           type: { enum: ["requirement", "design", "ai-artifact", "git"] },
           include: { type: "array", items: { type: "string" } },
           maxCommits: { type: "integer", minimum: 1, maximum: 1000 },
+          includeTransactionalCommits: { type: "boolean" },
         },
       },
     },

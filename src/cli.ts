@@ -128,7 +128,12 @@ async function main(): Promise<void> {
     .option("--requirements <globs...>", "需求来源 glob；自动发现歧义时用于最小选择")
     .option("--base-branch <name>", "覆盖自动发现的基线分支")
     .option("--max-chars <number>", "每片来源摘录字符预算；首次默认 12000", parseBudget)
-    .option("--max-items <number>", "每片最多资产数；首次默认 1", parseBudget)
+    .option("--max-items <number>", "每片最多资产数；默认按 maxShards 自动平衡", parseBudget)
+    .option("--max-shards <number>", "总分片数上限；首次默认 10", parseBudget)
+    .option(
+      "--include-transactional-commits",
+      "保留 dependency/lockfile、纯工具配置或纯格式化事务提交",
+    )
     .option("--provider <executable>", "可选外部 provider 适配器；凭证仅从环境变量读取")
     .option("--yes", "接受无歧义默认值，或接受全部自动发现的需求目录")
     .action(
@@ -139,6 +144,8 @@ async function main(): Promise<void> {
         baseBranch?: string;
         maxChars?: number;
         maxItems?: number;
+        maxShards?: number;
+        includeTransactionalCommits?: boolean;
         provider?: string;
         yes?: boolean;
       }) =>
@@ -183,7 +190,8 @@ async function main(): Promise<void> {
       .description("生成小上下文 manifest 与待分析分片，不写入目标仓库")
       .option("--output <directory>", "分片工作目录；默认必须显式指定")
       .option("--max-chars <number>", "每片来源摘录字符预算", parseBudget, 12_000)
-      .option("--max-items <number>", "每片最多资产数", parseBudget, 1)
+      .option("--max-items <number>", "每片最多资产数；默认自动平衡", parseBudget)
+      .option("--max-shards <number>", "总分片数上限；默认读取 config 或使用 10", parseBudget)
       .option("--resume", "续跑同一 manifest，仅列出未完成分片")
       .option("--legacy-stdout", "兼容旧流程：向 stdout 输出单一 JSON 数组"),
   ).action(
@@ -191,7 +199,8 @@ async function main(): Promise<void> {
       options: CommonOptions & {
         output?: string;
         maxChars: number;
-        maxItems: number;
+        maxItems?: number;
+        maxShards?: number;
         resume?: boolean;
         legacyStdout?: boolean;
       },
@@ -209,7 +218,8 @@ async function main(): Promise<void> {
       print(
         await prepareShardPipeline(options.repo, options.config, options.output, {
           maxChars: options.maxChars,
-          maxItems: options.maxItems,
+          ...(options.maxItems !== undefined ? { maxItems: options.maxItems } : {}),
+          ...(options.maxShards !== undefined ? { maxShards: options.maxShards } : {}),
           resume: options.resume ?? false,
         }),
       );

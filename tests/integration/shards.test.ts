@@ -179,6 +179,78 @@ describe("小上下文分片协议", () => {
       loadAssetsInput(path.join(root, "empty-analysis.json"), sourceRecords),
     ).rejects.toThrow("schema 校验");
   });
+
+  it("默认最多十片并按预算平衡，无法容纳时 fail-closed", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "asset-balanced-shards-"));
+    temporary.push(root);
+    const sourceRecords = Array.from({ length: 23 }, (_, index): ScanRecord => ({
+      sourceType: index % 2 === 0 ? "requirement" : "design",
+      sourceRef: `docs/source-${String(index + 1).padStart(2, "0")}.md`,
+      sourceRevision: `rev-${index + 1}`,
+      contentHash: `sha256:${String(index + 1).padStart(64, "0")}`,
+      content: `# 资产 ${index + 1}\n这是第 ${index + 1} 条可验证的小上下文来源。`,
+    }));
+    const assets = prepare(sourceRecords, null);
+    const output = path.join(root, "balanced");
+    const result = await prepareShards(sourceRecords, assets, output);
+    expect(result.pendingShards).toHaveLength(10);
+    expect(result.maxShards).toBe(10);
+    expect(result.maxItemsMode).toBe("auto");
+    const manifest = JSON.parse(
+      await readFile(path.join(output, "manifest.json"), "utf8"),
+    ) as ShardManifest;
+    expect(manifest.maxShards).toBe(10);
+    expect(manifest.maxItemsMode).toBe("auto");
+    expect(manifest.shards.flatMap((entry) => entry.assetIds)).toEqual(
+      assets.map((asset) => asset.assetId),
+    );
+    expect(
+      Math.max(...manifest.shards.map((entry) => entry.assetIds.length)) -
+        Math.min(...manifest.shards.map((entry) => entry.assetIds.length)),
+    ).toBeLessThanOrEqual(1);
+
+    const oversizedRecords = Array.from({ length: 11 }, (_, index): ScanRecord => ({
+      ...sourceRecords[index]!,
+      content: `# 超长资产 ${index + 1}\n${"证据".repeat(7_000)}`,
+    }));
+    await expect(
+      prepareShards(
+        oversizedRecords,
+        prepare(oversizedRecords, null),
+        path.join(root, "overflow"),
+      ),
+    ).rejects.toThrow("未丢弃任何资产或证据");
+    await expect(
+      prepareShards(sourceRecords.slice(0, 11), assets.slice(0, 11), path.join(root, "fixed"), {
+        maxItems: 1,
+      }),
+    ).rejects.toThrow("--max-shards");
+  });
+
+  it("maxShards 进入 fingerprint 且 resume 不能更改预算", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "asset-shard-resume-budget-"));
+    temporary.push(root);
+    const sourceRecords = Array.from({ length: 12 }, (_, index): ScanRecord => ({
+      sourceType: index % 2 === 0 ? "requirement" : "design",
+      sourceRef: `docs/resume-${index + 1}.md`,
+      sourceRevision: `rev-${index + 1}`,
+      contentHash: `sha256:${String(index + 101).padStart(64, "0")}`,
+      content: `# Resume ${index + 1}\n稳定输入内容。`,
+    }));
+    const assets = prepare(sourceRecords, null);
+    const output = path.join(root, "work");
+    const first = await prepareShards(sourceRecords, assets, output, { maxShards: 6 });
+    expect(first.pendingShards).toHaveLength(6);
+    const resumed = await prepareShards(sourceRecords, assets, output, { resume: true });
+    expect(resumed.maxShards).toBe(6);
+    expect(resumed.pendingShards).toEqual(first.pendingShards);
+    await expect(
+      prepareShards(sourceRecords, assets, output, {
+        maxShards: 7,
+        resume: true,
+      }),
+    ).rejects.toThrow("resume 不能更改");
+  });
 });
 
 describe("分片目录 finalize", () => {
@@ -292,7 +364,7 @@ describe("零配置 start/deliver", () => {
   it("从 React 风格仓库用两条短命令完成 editor-assisted 交付", async () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), "asset-zero-config-"));
     temporary.push(repo);
-    await mkdir(path.join(repo, "docs/requirements"), { recursive: true });
+    await mkdir(path.join(repo, "spec"), { recursive: true });
     await mkdir(path.join(repo, "src"), { recursive: true });
     await writeFile(
       path.join(repo, "package.json"),
@@ -301,7 +373,7 @@ describe("零配置 start/deliver", () => {
     );
     await writeFile(path.join(repo, "src/App.tsx"), "export const App = () => null;\n", "utf8");
     await writeFile(
-      path.join(repo, "docs/requirements/checkout.md"),
+      path.join(repo, "spec/checkout.md"),
       "# 结账需求\n必须支持明确的成功和失败验收路径。\n",
       "utf8",
     );
@@ -336,6 +408,8 @@ describe("零配置 start/deliver", () => {
       "提交消息只作意图线索",
       "禁止打开全仓或完整大文件",
       "PATCH_TRUNCATED",
+      "skippedGitCommits",
+      "--include-transactional-commits",
       "exit 0 才表示该片完成",
       "2.1",
       "2.2",
@@ -345,6 +419,7 @@ describe("零配置 start/deliver", () => {
       expect(task).toContain(constraint);
     }
     const effectiveBefore = await readFile(started.effectiveConfig, "utf8");
+    expect(effectiveBefore).toContain("spec/**/*.md");
     await expect(
       startWorkflow({ cwd: repo, yes: true, baseBranch: "other" }),
     ).rejects.toThrow("resume 不能更改");

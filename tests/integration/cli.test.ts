@@ -39,7 +39,16 @@ describe("中文 CLI", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("--max-chars");
     expect(result.stdout).toContain("--max-items");
+    expect(result.stdout).toContain("--max-shards");
     expect(result.stdout).toContain("--resume");
     expect(result.stdout).toContain("--legacy-stdout");
+  });
+
+  it("暴露事务提交覆盖和默认总分片预算", () => {
+    const result = invoke(["start", "--help"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("--max-shards");
+    expect(result.stdout).toContain("默认 10");
+    expect(result.stdout).toContain("--include-transactional-commits");
   });
 });
