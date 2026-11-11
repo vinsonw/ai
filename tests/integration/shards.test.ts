@@ -262,6 +262,7 @@ describe("分片目录 finalize", () => {
     await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Shard Test"]);
     await git(repo, ["config", "user.email", "shard@example.invalid"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-m", "fixture: shard baseline"]);
     await git(repo, ["checkout", "-b", "asset-compounding/shards"]);
@@ -296,6 +297,7 @@ describe("零配置 start/deliver", () => {
     await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Fixture Test"]);
     await git(repo, ["config", "user.email", "fixture@example.invalid"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-m", "fixture: marked non-acceptance data"]);
     await expect(startWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
@@ -318,6 +320,7 @@ describe("零配置 start/deliver", () => {
     await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Pattern Test"]);
     await git(repo, ["config", "user.email", "pattern@example.invalid"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-m", "fixture: requirement pattern diagnostics"]);
     await git(repo, ["checkout", "-b", "asset-compounding/patterns"]);
@@ -381,6 +384,7 @@ describe("零配置 start/deliver", () => {
     await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
     await git(repo, ["config", "user.name", "Zero Config"]);
     await git(repo, ["config", "user.email", "zero@example.invalid"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
     await git(repo, ["remote", "add", "origin", "https://secret-token@example.invalid/demo/react-style-fixture.git"]);
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-m", "feat: realistic react baseline"]);

@@ -104,6 +104,7 @@ try {
   await run("git", ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await run("git", ["config", "user.name", "Packed Smoke"]);
   await run("git", ["config", "user.email", "packed-smoke@example.invalid"]);
+  await run("git", ["config", "commit.gpgsign", "false"]);
   await run("git", [
     "remote",
     "add",
