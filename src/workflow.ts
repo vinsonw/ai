@@ -554,7 +554,9 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
   if (validation.pendingShards.length > 0) {
     throw new Error(`仍有 ${validation.pendingShards.length} 个未完成分片`);
   }
-  const delivery = await runPipeline(repo, session.config, session.shards);
+  const delivery = await runPipeline(repo, session.config, session.shards, {
+    freezeSources: true,
+  });
   const verification = await verifySecondRun(repo, session.config);
   const acceptance = await writeAcceptancePackage({
     repo,

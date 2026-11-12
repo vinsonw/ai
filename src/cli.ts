@@ -20,6 +20,7 @@ interface CommonOptions {
   repo: string;
   config: string;
   assets?: string;
+  freezeSources?: boolean;
 }
 
 function print(value: unknown): void {
@@ -29,7 +30,8 @@ function print(value: unknown): void {
 function withCommonOptions(command: Command): Command {
   return command
     .requiredOption("--repo <path>", "目标 Git 仓库")
-    .requiredOption("--config <path>", "YAML 运行配置");
+    .requiredOption("--config <path>", "YAML 运行配置")
+    .option("--freeze-sources", "使用分片 manifest 冻结来源，跳过重扫 Git 窗口");
 }
 
 function parseBudget(value: string): number {
@@ -52,7 +54,7 @@ async function main(): Promise<void> {
     .name("asset-compound")
     .description("生成标准 docs 分类目录和可增量、可追溯的验收资产")
     .usage("[选项] <命令>")
-    .version("0.1.9", "-V, --version", "显示版本")
+    .version("0.1.10", "-V, --version", "显示版本")
     .helpOption("-h, --help", "显示帮助")
     .addHelpCommand("help [command]", "显示指定命令的帮助")
     .showHelpAfterError("（使用 --help 查看帮助）")
@@ -262,7 +264,11 @@ async function main(): Promise<void> {
       .description("执行完整管线并渲染文档")
       .option("--assets <path>", "已校验的补充资产 JSON"),
   ).action(async (options: CommonOptions) =>
-    print(await runPipeline(options.repo, options.config, options.assets)),
+    print(
+      await runPipeline(options.repo, options.config, options.assets, {
+        ...(options.freezeSources ? { freezeSources: true } : {}),
+      }),
+    ),
   );
 
   program
@@ -284,7 +290,11 @@ async function main(): Promise<void> {
       .description("执行、验证并输出最终结果")
       .option("--assets <path>", "已校验的补充资产 JSON"),
   ).action(async (options: CommonOptions) =>
-    print(await runPipeline(options.repo, options.config, options.assets)),
+    print(
+      await runPipeline(options.repo, options.config, options.assets, {
+        ...(options.freezeSources ? { freezeSources: true } : {}),
+      }),
+    ),
   );
 
   withCommonOptions(
@@ -293,7 +303,11 @@ async function main(): Promise<void> {
       .description("finalize 的别名")
       .option("--assets <path>", "已校验的补充资产 JSON"),
   ).action(async (options: CommonOptions) =>
-    print(await runPipeline(options.repo, options.config, options.assets)),
+    print(
+      await runPipeline(options.repo, options.config, options.assets, {
+        ...(options.freezeSources ? { freezeSources: true } : {}),
+      }),
+    ),
   );
 
   await program.parseAsync(process.argv);

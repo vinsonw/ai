@@ -12,6 +12,7 @@ export {
   redactSensitive,
   render,
   renderAsset,
+  rehydrateRecordsFromManifest,
   runPipeline,
   scan,
   sha256,
@@ -22,6 +23,7 @@ export {
   inputIsDirectory,
   loadShardedDirectory,
   prepareShards,
+  readShardManifest,
   validateShardedInput,
 } from "./shards.js";
 export { assertSubstantiveAsset } from "./quality.js";
@@ -66,3 +68,4 @@ export type {
   DeliverWorkflowOptions,
   StartWorkflowOptions,
 } from "./workflow.js";
+export type { RunPipelineOptions } from "./pipeline.js";

@@ -651,3 +651,7 @@ export async function loadShardedDirectory(directoryInput: string): Promise<Asse
 export async function inputIsDirectory(input: string): Promise<boolean> {
   return (await stat(input)).isDirectory();
 }
+
+export async function readShardManifest(directory: string): Promise<ShardManifest> {
+  return readManifest(directory);
+}

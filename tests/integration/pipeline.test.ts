@@ -8,13 +8,14 @@ import {
   inspectPipeline,
   loadConfig,
   prepare,
+  rehydrateRecordsFromManifest,
   runPipeline,
   scan,
   verifyGitScope,
 } from "../../src/pipeline.js";
-import { prepareShards } from "../../src/shards.js";
+import { prepareShards, readShardManifest, validateShardedInput } from "../../src/shards.js";
 import type { AssetShard } from "../../src/types.js";
-import { writeLegacyAssets } from "../helpers.js";
+import { enrichAssets, writeLegacyAssets } from "../helpers.js";
 
 const temporary: string[] = [];
 const fixture = path.resolve("tests/fixtures/sample-project");
@@ -454,5 +455,54 @@ sourceSets:
     const result = await runPipeline(repo, config, nextAssets);
     expect(result.conflicts.some((conflict) => conflict.path.endsWith("index.md"))).toBe(true);
     expect(await readFile(index, "utf8")).toContain("Manual index note");
+  });
+
+  it("rehydrates manifest-frozen sources for deliver after git scan drift", async () => {
+    const repo = await createRepository();
+    const config = path.join(repo, "run.yaml");
+    const work = path.join(path.dirname(repo), `${path.basename(repo)}-frozen-shards`);
+    temporary.push(work);
+    const inspected = await inspectPipeline(repo, config);
+    const frozenRecords = inspected.records;
+    const prepared = await prepareShards(inspected.records, inspected.assets, work, {
+      skippedGitCommits: inspected.skippedGitCommits,
+    });
+    for (const file of prepared.pendingShards) {
+      const shard = JSON.parse(await readFile(file, "utf8")) as AssetShard;
+      shard.items = shard.items.map((item) => {
+        const asset = enrichAssets([item.asset])[0]!;
+        for (const finding of Object.values(asset.analysis)) {
+          finding.evidence.unshift(`本资产来源证据：${item.sourceExcerpt.text}`);
+        }
+        return { ...item, asset };
+      });
+      await writeFile(file, `${JSON.stringify(shard, null, 2)}\n`, "utf8");
+      await validateShardedInput(file);
+    }
+    await validateShardedInput(work);
+
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await writeFile(path.join(repo, "src/drift.ts"), "export const drift = true;\n", "utf8");
+    await git(repo, ["add", "src/drift.ts"]);
+    await git(repo, ["commit", "-m", "feat: drift commit after prepare"]);
+
+    const manifest = await readShardManifest(work);
+    const configLoaded = await loadConfig(config);
+    const rehydrated = await rehydrateRecordsFromManifest(repo, manifest, configLoaded);
+    expect(rehydrated.map((record) => record.contentHash)).toEqual(
+      frozenRecords.map((record) => record.contentHash),
+    );
+    expect(rehydrated.map((record) => record.sourceRef)).toEqual(
+      manifest.assets.map((item) => item.sourceRef),
+    );
+
+    const freshScan = await scan(repo, configLoaded);
+    expect(freshScan.length).toBeGreaterThan(frozenRecords.length);
+
+    await expect(runPipeline(repo, config, work)).rejects.toThrow("增强资产输入");
+
+    const result = await runPipeline(repo, config, work, { freezeSources: true });
+    expect(result.inputFormat).toBe("sharded-directory");
+    expect(result.conflicts).toEqual([]);
   });
 });
