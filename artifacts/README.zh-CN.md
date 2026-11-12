@@ -1,19 +1,20 @@
-# `asset-compound` 0.1.15 离线安装包
+# `asset-compound` 0.1.16 离线安装包
 
-`asset-compound-0.1.15.tgz` 为 **单一 Windows 兼容 bundle**：在 POSIX 常量前缀
+`asset-compound-0.1.16.tgz` 为 **单一 Windows 兼容 bundle**：在 POSIX 常量前缀
 比较前统一路径分隔符，覆盖 `assertOutputPath`、`verifyGitScope`（`git status`
 路径）、标准 docs 的 `safeTarget`，以及 `start`/`deliver` 的 session 仓库根匹配。
-同时保留 0.1.14 的 deliver 信任分片路径、`manifest` 冻结 finalize、有效 Git 提交
-扫描、默认 `maxChars=6000`/`maxItems=2`、标准 docs 与 R1–R6 / V1–V8 验收能力。
-包内置全部生产依赖，可在没有 registry 网络访问、没有预热 npm cache 的干净目录中
-本地安装；运行要求 Node.js `>=20`、Git `>=2.20.1`。
+`deliver` 写入验收包时对 manifest 冻结的 `untracked` / `contentHash` 文件来源
+不再要求 40 位 Git SHA（`git` 来源仍要求提交 SHA）。同时保留 deliver 信任分片路径、
+`manifest` 冻结 finalize、有效 Git 提交扫描、默认 `maxChars=6000`/`maxItems=2`、
+标准 docs 与 R1–R6 / V1–V8 验收能力。包内置全部生产依赖，可在没有 registry 网络访问、
+没有预热 npm cache 的干净目录中本地安装；运行要求 Node.js `>=20`、Git `>=2.20.1`。
 
-从 `0.1.14` 升级：删除旧内层 `asset-compound-0.1.14.tgz`，仅保留本文件作为
+从 `0.1.15` 升级：删除旧内层 `asset-compound-0.1.15.tgz`，仅保留本文件作为
 唯一 canonical 离线 payload；校验 SHA-256 后重新 `npm install --offline`。
 
-生成过程先用 `0.1.15` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
+生成过程先用 `0.1.16` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
 再仅向 staging 的 `package.json` 加入 `bundledDependencies` 并安装生产依赖。
-内层与 npm 发布版本同为 `0.1.15`，因此不会递归包含自身。
+内层与 npm 发布版本同为 `0.1.16`，因此不会递归包含自身。
 
 ## 校验
 
@@ -26,18 +27,18 @@ sha256sum -c SHA256SUMS
 在 PowerShell 中可运行：
 
 ```powershell
-(Get-FileHash .\asset-compound-0.1.15.tgz -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\asset-compound-0.1.16.tgz -Algorithm SHA256).Hash.ToLower()
 ```
 
 结果必须与 `SHA256SUMS` 中的值完全一致。
 
 ## 同步到其他平台后安装
 
-将 `asset-compound-0.1.15.tgz` 下载或同步到目标平台，校验 SHA-256 后，在
+将 `asset-compound-0.1.16.tgz` 下载或同步到目标平台，校验 SHA-256 后，在
 tarball 所在目录执行：
 
 ```bash
-npm install --offline ./asset-compound-0.1.15.tgz
+npm install --offline ./asset-compound-0.1.16.tgz
 npx asset-compound --version
 npx asset-compound --help
 ```
@@ -45,7 +46,7 @@ npx asset-compound --help
 也可以直接执行本地包中的 CLI：
 
 ```bash
-npx --offline --yes --package ./asset-compound-0.1.15.tgz asset-compound --help
+npx --offline --yes --package ./asset-compound-0.1.16.tgz asset-compound --help
 ```
 
 在目标 Git 仓库创建独立分支并准备至少一个真实 requirement 文件后，可运行：
@@ -60,5 +61,5 @@ npx asset-compound start --yes
 npx asset-compound deliver --yes
 ```
 
-该文件固定为内层 `0.1.15` payload。外层 `0.1.15` pack 必须输出到仓库外的临时
+该文件固定为内层 `0.1.16` payload。外层 `0.1.16` pack 必须输出到仓库外的临时
 目录，并验证只包含这一份内层 tgz 且 SHA-256 与 `SHA256SUMS` 一致。

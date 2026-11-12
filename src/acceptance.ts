@@ -4,7 +4,38 @@ import { escapesRepositoryRelative, relativePosix } from "./path-utils.js";
 import writeFileAtomic from "write-file-atomic";
 import { assertSubstantiveAsset } from "./quality.js";
 import { currentBranch, git, renderAsset, sha256 } from "./pipeline.js";
-import type { AssetRecord, PipelineResult, RunConfig } from "./types.js";
+import type { AssetRecord, PipelineResult, RunConfig, SourceType } from "./types.js";
+
+const GIT_REVISION = /^[0-9a-f]{40}$/i;
+const CONTENT_HASH = /^sha256:[0-9a-f]{64}$/i;
+const FILE_SOURCE_TYPES = new Set<SourceType>(["requirement", "design", "ai-artifact"]);
+
+export function assertAssetSourceRevision(
+  asset: AssetRecord,
+  options?: { trustDelivered?: boolean },
+): void {
+  if (asset.sourceType === "git") {
+    if (!GIT_REVISION.test(asset.sourceRevision)) {
+      throw new Error(`来源未提交或 revision 不可追溯，不能计入真实数据源：${asset.sourceRef}`);
+    }
+    return;
+  }
+  if (FILE_SOURCE_TYPES.has(asset.sourceType)) {
+    if (options?.trustDelivered) {
+      if (
+        asset.sourceRevision === "untracked" ||
+        GIT_REVISION.test(asset.sourceRevision) ||
+        (CONTENT_HASH.test(asset.contentHash) && asset.sourceRevision.trim().length > 0)
+      ) {
+        return;
+      }
+      throw new Error(`来源未提交或 revision 不可追溯，不能计入真实数据源：${asset.sourceRef}`);
+    }
+  }
+  if (!GIT_REVISION.test(asset.sourceRevision)) {
+    throw new Error(`来源未提交或 revision 不可追溯，不能计入真实数据源：${asset.sourceRef}`);
+  }
+}
 
 const STANDARD_DIRECTORIES = [
   "00-项目总览",
@@ -53,6 +84,8 @@ interface AcceptanceOptions {
   repo: string;
   config: RunConfig;
   delivery: PipelineResult;
+  /** deliver 信任已完成分片时，文件型来源允许 manifest 中的 untracked / contentHash 溯源 */
+  trustDelivered?: boolean;
   verification: {
     secondRunZeroDiff: boolean;
     counts: {
@@ -468,9 +501,10 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
   if (sourceTypes.size < 2) throw new Error("2.1 提取源清单必须包含至少两种真实数据源");
   if (options.delivery.assets.length === 0) throw new Error("没有可验收资产");
   for (const asset of options.delivery.assets) {
-    if (!/^[0-9a-f]{40}$/i.test(asset.sourceRevision)) {
-      throw new Error(`来源未提交或 revision 不可追溯，不能计入真实数据源：${asset.sourceRef}`);
-    }
+    assertAssetSourceRevision(
+      asset,
+      options.trustDelivered ? { trustDelivered: true } : undefined,
+    );
     assertSubstantiveAsset(asset);
   }
   assertRetrospectiveInput(options.retrospective);

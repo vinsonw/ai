@@ -577,6 +577,7 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
     verification,
     metadata,
     retrospective,
+    trustDelivered: true,
   });
   return {
     mode: session.mode,
