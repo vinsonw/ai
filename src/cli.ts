@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     .name("asset-compound")
     .description("生成标准 docs 分类目录和可增量、可追溯的验收资产")
     .usage("[选项] <命令>")
-    .version("0.1.7", "-V, --version", "显示版本")
+    .version("0.1.8", "-V, --version", "显示版本")
     .helpOption("-h, --help", "显示帮助")
     .addHelpCommand("help [command]", "显示指定命令的帮助")
     .showHelpAfterError("（使用 --help 查看帮助）")
@@ -131,8 +131,13 @@ async function main(): Promise<void> {
     .option("--max-items <number>", "每片最多资产数；默认按 maxShards 自动平衡", parseBudget)
     .option("--max-shards <number>", "总分片数上限；首次默认 10", parseBudget)
     .option(
+      "--max-commits <number>",
+      "Git 来源最近提交数；首次默认 20（非全历史）",
+      parseBudget,
+    )
+    .option(
       "--include-transactional-commits",
-      "保留 dependency/lockfile、纯工具配置或纯格式化事务提交",
+      "保留 dependency/lockfile、eslint/webpack/babel/tsconfig 等纯工具/CI/格式化事务提交",
     )
     .option("--provider <executable>", "可选外部 provider 适配器；凭证仅从环境变量读取")
     .option("--yes", "接受无歧义默认值，或接受全部自动发现的需求目录")
@@ -145,6 +150,7 @@ async function main(): Promise<void> {
         maxChars?: number;
         maxItems?: number;
         maxShards?: number;
+        maxCommits?: number;
         includeTransactionalCommits?: boolean;
         provider?: string;
         yes?: boolean;

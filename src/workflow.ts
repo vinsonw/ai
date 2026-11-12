@@ -95,6 +95,7 @@ export interface StartWorkflowOptions {
   maxChars?: number;
   maxItems?: number;
   maxShards?: number;
+  maxCommits?: number;
   includeTransactionalCommits?: boolean;
   yes?: boolean;
   provider?: string;
@@ -160,7 +161,7 @@ async function discoverConfig(
       { type: "requirement", include: found },
       {
         type: "git",
-        maxCommits: 20,
+        maxCommits: options.maxCommits ?? 20,
         includeTransactionalCommits: options.includeTransactionalCommits ?? false,
       },
     ],
@@ -192,11 +193,22 @@ function taskText(session: WorkflowSession): string {
 3. 遇到 \`PATCH_TRUNCATED/PATCH_CAPTURE_TRUNCATED\` 必须在 gaps 明确未覆盖内容；
    禁止打开全仓或完整大文件补齐，禁止推断未显示的调用方、运行结果或业务结论。
 
+## Git 来源窗口
+
+Git 来源默认仅最近 **20** 次提交（\`maxCommits=20\`），不是全仓历史。不得暗示、
+假设或声称已审阅全部提交；窗口外内容只能写入 gap。
+
+## 资产提炼范围
+
+处理 shard 时只提炼 **业务规则、架构决策、接口契约、数据模型、可复用代码模式**。
+不得为 eslint/webpack/babel/tsconfig/prettier/lockfile、纯依赖升级、CI/format-only、
+editorconfig 等事务性产物单独造“业务资产”。
+
 ## 事务性提交边界
 
 manifest/source manifest 中的 \`skippedGitCommits\` 仅是 R1/R6 可追溯证据，不是
-待分析资产。不得为被跳过的依赖/锁文件、工具配置或纯格式化提交补造资产；如确需
-纳入，停止当前 workspace，并要求用户以
+待分析资产。不得为被跳过的依赖/锁文件、工具/构建/CI 配置或纯格式化提交补造资产；
+如确需纳入，停止当前 workspace，并要求用户以
 \`--include-transactional-commits\` 新建 workspace 重跑。
 
 ## 唯一输出与 schema
@@ -280,10 +292,11 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
       options.config ||
       options.requirements?.length ||
       options.baseBranch ||
-      options.includeTransactionalCommits !== undefined
+      options.includeTransactionalCommits !== undefined ||
+      options.maxCommits !== undefined
     ) {
       throw new Error(
-        "resume 不能更改 config、requirements、base branch 或事务提交过滤；请使用新的 --workspace",
+        "resume 不能更改 config、requirements、base branch、maxCommits 或事务提交过滤；请使用新的 --workspace",
       );
     }
     config = await loadConfig(configPath);
@@ -292,20 +305,20 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
       ? await loadConfig(options.config)
       : await discoverConfig(repo, options);
     const transactionalOverride = options.includeTransactionalCommits;
+    const maxCommitsOverride = options.maxCommits;
     config = {
       ...config,
       maxShards: options.maxShards ?? config.maxShards ?? 10,
-      sourceSets:
-        transactionalOverride === undefined
-          ? config.sourceSets
-          : config.sourceSets.map((source) =>
-              source.type === "git"
-                ? {
-                    ...source,
-                    includeTransactionalCommits: transactionalOverride,
-                  }
-                : source,
-            ),
+      sourceSets: config.sourceSets.map((source) => {
+        if (source.type !== "git") return source;
+        return {
+          ...source,
+          ...(maxCommitsOverride !== undefined ? { maxCommits: maxCommitsOverride } : {}),
+          ...(transactionalOverride !== undefined
+            ? { includeTransactionalCommits: transactionalOverride }
+            : {}),
+        };
+      }),
     };
     await assertIndependentBranch(repo, config);
     await writeText(configPath, stringifyYaml(config));

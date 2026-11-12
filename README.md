@@ -3,15 +3,15 @@
 编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，按标准
 `docs/` 分类目录沉淀为可增量、可追溯、可验收的资产。
 
-当前 npm 公开版本为 `0.1.5`；本分支准备外层 `0.1.7`，包内固定携带可离线
-安装的 `0.1.6` payload。本 PR 不执行 npm publish。
+当前 npm 公开版本为 `0.1.5`；本分支准备外层 `0.1.8`，包内固定携带可离线
+安装的 `0.1.7` payload。本 PR 不执行 npm publish。
 
 ## 最短路径：本地 tgz + 两步交付
 
 在 React 项目根目录安装本地 tarball，不需要 `REPO` / `WORK` 环境变量，也不需要手写 `run.yaml`：
 
 ```bash
-npm install --offline --no-save --package-lock=false /absolute/path/to/asset-compound-0.1.6.tgz
+npm install --offline --no-save --package-lock=false /absolute/path/to/asset-compound-0.1.7.tgz
 npx asset-compound start --yes
 ```
 
@@ -147,9 +147,10 @@ work/
 - 受 `maxChars` 限制的来源摘录；
 - 待增强的结构化 `asset`。
 
-不会把全量扫描内容放入 manifest。Git 来源按 commit 的变更文件拆分；每条包含
+不会把全量扫描内容放入 manifest。Git 来源默认仅最近 **20** 次提交（`maxCommits=20`，
+可用 `start --max-commits` 或 `run.yaml` 覆盖），按 commit 的变更文件拆分；每条包含
 commit、path、status、文件级 patch/hunk，以及按 hunk 行号截取的少量变更后源码
-语境，不会把全仓或完整大文件交给模型。超长 patch 先按安全上限截断并保留明确标记，
+语境，不会把全仓、完整大文件或“全历史”暗示交给模型。超长 patch 先按安全上限截断并保留明确标记，
 分片再按完整行、保留 hunk 定位执行确定性首尾摘录，设置 `truncated: true`、
 `strategy: "head-tail"`；最终仍以 `contentHash/sourceRevision` 对当前来源重新核验。
 
@@ -173,11 +174,13 @@ npx asset-compound prepare \
 单片资产上限无法无损容纳所有资产，命令会 fail-closed，不会丢弃资产/证据；按错误
 提示调整 `--max-shards`、`--max-chars` 或 `--max-items` 后在新 workspace 重试。
 
-默认会保守排除仅含依赖/锁文件、已知 lint/format/tool 配置，或经 `git diff -w`
-确认仅空白变化的事务性提交。`manifest.json`、来源清单和运行报告保留其 commit、
-tree/content hash、文件与原因，供 R1/R6 追溯。混有业务代码的提交不会被排除。
-确需把事务提交作为资产时使用 `start --include-transactional-commits --yes` 新建
-workspace；模型不得把 `skippedGitCommits` 自行补造成资产。
+默认会保守排除仅含依赖/锁文件、eslint/webpack/babel/tsconfig/prettier/editorconfig、
+CI/workflow、已知 lint/format/build 工具配置，或经 `git diff -w` 确认仅空白变化的
+事务性提交；AI 只应提炼业务/架构/接口/数据/可复用代码模式。`manifest.json`、来源
+清单和运行报告保留其 commit、tree/content hash、文件与原因，供 R1/R6 追溯。混有
+业务代码的提交不会被排除。确需把事务提交作为资产时使用
+`start --include-transactional-commits --yes` 新建 workspace；模型不得把
+`skippedGitCommits` 自行补造成资产。
 
 断点续跑：
 
@@ -272,9 +275,9 @@ npx asset-compound finalize \
 
 ## npm 包内容
 
-外层 `0.1.7` tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、
+外层 `0.1.8` tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、
 `prompts/`、`protocol/`、可选 Cursor Skill 和 `artifacts/`。`artifacts/` 中只
-包含一份 `asset-compound-0.1.6.tgz`；该 payload bundle 了全部生产依赖，可在
+包含一份 `asset-compound-0.1.7.tgz`；该 payload bundle 了全部生产依赖，可在
 空 npm cache、无 registry 网络的干净目录中安装。
 
 ESM：
@@ -288,8 +291,8 @@ import {
 } from "@vinsonw2/asset-compound";
 ```
 
-内层 payload 从 `0.1.6` 干净 packlist 生成，不包含 `artifacts/`。外层 pack
-始终写到仓库外的临时目录，因此不会把 `0.1.7` 递归打入自身。内层文件的
+内层 payload 从 `0.1.7` 干净 packlist 生成，不包含 `artifacts/`。外层 pack
+始终写到仓库外的临时目录，因此不会把 `0.1.8` 递归打入自身。内层文件的
 SHA-256 记录在 `artifacts/SHA256SUMS`，中文离线步骤见
 `artifacts/README.zh-CN.md`。
 

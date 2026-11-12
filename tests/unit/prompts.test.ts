@@ -23,6 +23,12 @@ describe("AI 小上下文提示契约", () => {
       "提交消息只能提示意图",
       "禁止打开全仓或完整大文件",
       "PATCH_TRUNCATED",
+      "maxCommits=20",
+      "不是全仓历史",
+      "资产提炼范围",
+      "业务规则、架构决策、接口契约、数据模型、可复用代码模式",
+      "eslint",
+      "webpack",
       "skippedGitCommits",
       "不是待分析资产",
       "--include-transactional-commits",
@@ -51,6 +57,8 @@ describe("AI 小上下文提示契约", () => {
       expect(prompt).toContain("提交消息不能替代代码证据");
       expect(prompt).toContain("文件路径@commit + @@ hunk 定位");
       expect(prompt).toContain("禁止打开全仓或完整大文件");
+      expect(prompt).toContain("maxCommits=20");
+      expect(prompt).toContain("webpack");
       expect(prompt).toContain("skippedGitCommits");
       expect(prompt).toContain("--include-transactional-commits");
     }
@@ -65,9 +73,10 @@ describe("AI 小上下文提示契约", () => {
     expect(protocol).toContain("sourceExcerpt");
     expect(protocol).toContain("先读 diff");
     expect(protocol).toContain("文件路径@commit + @@ hunk 定位");
-    expect(protocol).toContain("不向模型灌入全仓或完整大文件");
-    expect(protocol).toContain("默认");
+    expect(protocol).toContain("不向模型灌入全仓、完整大文件");
+    expect(protocol).toContain("maxCommits=20");
     expect(protocol).toContain("maxShards=10");
+    expect(protocol).toContain("webpack");
     expect(protocol).toContain("skippedGitCommits");
     expect(protocol).toContain("不是 AI");
     expect(protocol).toContain("R1–R6");

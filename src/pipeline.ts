@@ -192,7 +192,8 @@ function generatedDocumentationPath(file: string): boolean {
 
 const LOCKFILE = /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.lock|composer\.lock|Cargo\.lock|Gemfile\.lock|Pipfile\.lock|poetry\.lock|uv\.lock)$/u;
 const DEPENDENCY_MANIFEST = /(?:^|\/)(?:package\.json|pyproject\.toml|composer\.json|Cargo\.toml|Gemfile)$/u;
-const TOOL_CONFIG = /(?:^|\/)(?:\.editorconfig|\.eslintrc(?:\..+)?|eslint\.config\.[cm]?[jt]s|\.prettierrc(?:\..+)?|prettier\.config\.[cm]?[jt]s|biome\.jsonc?|\.stylelintrc(?:\..+)?|stylelint\.config\.[cm]?[jt]s|\.commitlintrc(?:\..+)?|commitlint\.config\.[cm]?[jt]s|\.lintstagedrc(?:\..+)?|lint-staged\.config\.[cm]?[jt]s|renovate\.json|\.github\/dependabot\.ya?ml)$/u;
+const TOOL_CONFIG =
+  /(?:^|\/)(?:\.editorconfig|\.eslintrc(?:\..+)?|eslint\.config\.[cm]?[jt]s|\.prettierrc(?:\..+)?|prettier\.config\.[cm]?[jt]s|biome\.jsonc?|\.stylelintrc(?:\..+)?|stylelint\.config\.[cm]?[jt]s|\.commitlintrc(?:\..+)?|commitlint\.config\.[cm]?[jt]s|\.lintstagedrc(?:\..+)?|lint-staged\.config\.[cm]?[jt]s|renovate\.json|\.github\/dependabot\.ya?ml|\.babelrc(?:\..+)?|babel\.config\.[cm]?[jt]s|tsconfig(?:\..+)?\.json|jsconfig\.json|webpack(?:\..+)?\.config\.[cm]?[jt]s|vite\.config\.[cm]?[jt]s|vitest\.config\.[cm]?[jt]s|jest\.config\.[cm]?[jt]s|rollup\.config\.[cm]?[jt]s|tsup\.config\.[cm]?[jt]s|\.github\/workflows\/[^/]+\.ya?ml|\.gitlab-ci\.ya?ml|Jenkinsfile|azure-pipelines\.ya?ml|\.circleci\/config\.ya?ml)$/u;
 const DEPENDENCY_SUBJECT = /(?:^|[\s:(])(?:deps?|dependencies|dependabot|renovate|bump|upgrade)(?:[\s:)]|$)/iu;
 const FORMATTING_SUBJECT = /(?:^|[\s:(])(?:format|formatting|prettier|eslint(?:\s+--fix)?|lint\s*fix)(?:[\s:)]|$)/iu;
 
@@ -227,7 +228,8 @@ async function classifyTransactionalCommit(
     return {
       commit,
       reasonCode: "tool-config-only",
-      reason: "仅变更已知 lint/format/dependency 工具配置，不包含业务代码",
+      reason:
+        "仅变更已知 lint/format/build/webpack/babel/tsconfig/CI 工具配置，不包含业务代码",
     };
   }
   if (firstParent && FORMATTING_SUBJECT.test(subject)) {
