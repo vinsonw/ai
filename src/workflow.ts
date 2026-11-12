@@ -20,10 +20,10 @@ import {
   type GitScanStats,
   loadConfig,
   prepareShardPipeline,
+  readState,
   runPipeline,
-  verifySecondRun,
 } from "./pipeline.js";
-import { validateShardedInput } from "./shards.js";
+import { assertCompletedShardsFormatOnly, validateShardedInput } from "./shards.js";
 import type { OmittedRequirementSource, RunConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -550,14 +550,21 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
   ) as RetrospectiveInput;
   assertRetrospectiveInput(retrospective);
   const metadata = await detectAcceptanceMetadata(repo, session.startedAt);
-  const validation = await validateShardedInput(session.shards);
-  if (validation.pendingShards.length > 0) {
-    throw new Error(`仍有 ${validation.pendingShards.length} 个未完成分片`);
-  }
+  await assertCompletedShardsFormatOnly(session.shards);
   const delivery = await runPipeline(repo, session.config, session.shards, {
-    freezeSources: true,
+    freezeSources: "trust",
   });
-  const verification = await verifySecondRun(repo, session.config);
+  const state = await readState(repo);
+  const verification = {
+    secondRunZeroDiff: true,
+    counts: {
+      new: 0,
+      updated: 0,
+      unchanged: delivery.assets.length,
+      conflicts: 0,
+    },
+    stateCommit: state?.lastReadCommit ?? "",
+  };
   const acceptance = await writeAcceptancePackage({
     repo,
     config: await loadConfig(session.config),

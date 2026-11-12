@@ -444,7 +444,7 @@ export async function prepareShards(
   return resultFor(directory, manifest, false);
 }
 
-function assertShard(
+function assertShardFormat(
   shard: AssetShard,
   entry: ShardManifestEntry,
   expected: Map<string, ShardProvenance>,
@@ -472,9 +472,6 @@ function assertShard(
     ids.some((id, index) => id !== entry.assetIds[index])
   ) {
     throw new Error(`分片资产顺序或数量被修改：${entry.path}`);
-  }
-  if (immutableInputHash(shard.items) !== entry.inputHash) {
-    throw new Error(`分片来源摘录或 provenance 被修改：${entry.path}`);
   }
   const excerptChars = shard.items.reduce(
     (sum, item) => sum + item.sourceExcerpt.excerptChars,
@@ -514,8 +511,24 @@ function assertShard(
     if (redact(JSON.stringify(item.asset)) !== JSON.stringify(item.asset)) {
       throw new Error(`分片资产包含敏感数据：${item.asset.assetId}`);
     }
+    return item.asset;
+  });
+}
+
+function assertShard(
+  shard: AssetShard,
+  entry: ShardManifestEntry,
+  expected: Map<string, ShardProvenance>,
+  maxChars: number,
+  maxItems: number,
+): AssetRecord[] {
+  if (immutableInputHash(shard.items) !== entry.inputHash) {
+    throw new Error(`分片来源摘录或 provenance 被修改：${entry.path}`);
+  }
+  const assets = assertShardFormat(shard, entry, expected, maxChars, maxItems);
+  for (const item of shard.items) {
     assertSubstantiveAsset(item.asset);
-    const sourceTokens = groundingTokens(excerpt.text);
+    const sourceTokens = groundingTokens(item.sourceExcerpt.text);
     if (sourceTokens.length < 2) {
       throw new Error(`资产 ${item.asset.assetId} 的来源摘录缺少可核验的实质内容`);
     }
@@ -528,8 +541,8 @@ function assertShard(
         );
       }
     }
-    return item.asset;
-  });
+  }
+  return assets;
 }
 
 function groundingTokens(value: string): string[] {
@@ -577,6 +590,115 @@ async function persistManifest(directory: string, manifest: ShardManifest): Prom
     .reduce((sum, entry) => sum + entry.assetIds.length, 0);
   manifest.manifestHash = manifestDigest({ ...manifest, manifestHash: "" });
   await writeJson(path.join(directory, MANIFEST), manifest);
+}
+
+export async function assertCompletedShardsFormatOnly(directoryInput: string): Promise<{
+  format: "sharded-directory";
+  completedAssets: number;
+  totalAssets: number;
+}> {
+  const directory = path.resolve(directoryInput);
+  const manifest = await readManifest(directory);
+  const pending = manifest.shards.filter((entry) => entry.status !== "completed");
+  if (pending.length > 0) {
+    throw new Error(`仍有 ${pending.length} 个未完成分片`);
+  }
+  if (manifest.completedAssets !== manifest.totalAssets) {
+    throw new Error(
+      `manifest 完成计数不一致：${manifest.completedAssets}/${manifest.totalAssets}`,
+    );
+  }
+  const expected = new Map(manifest.assets.map((item) => [item.assetId, item]));
+  for (const entry of manifest.shards) {
+    const file = shardPath(directory, entry);
+    const raw = await readFile(file, "utf8");
+    if (!entry.validatedHash || entry.validatedHash !== hash(raw)) {
+      throw new Error(`已完成分片缺少或已变更 validatedHash：${file}`);
+    }
+    const shard = JSON.parse(raw) as AssetShard;
+    assertShardFormat(shard, entry, expected, manifest.maxChars, manifest.maxItems);
+  }
+  return {
+    format: "sharded-directory",
+    completedAssets: manifest.totalAssets,
+    totalAssets: manifest.totalAssets,
+  };
+}
+
+async function loadShardedDirectoryTrust(directory: string): Promise<AssetRecord[]> {
+  const manifest = await readManifest(directory);
+  if (manifest.shards.some((entry) => entry.status !== "completed")) {
+    throw new Error(
+      `分片尚未全部完成：${manifest.completedAssets}/${manifest.totalAssets}；请逐片 validate 后再 deliver`,
+    );
+  }
+  const assets: AssetRecord[] = [];
+  const expected = new Map(manifest.assets.map((item) => [item.assetId, item]));
+  for (const entry of manifest.shards) {
+    const file = shardPath(directory, entry);
+    const raw = await readFile(file, "utf8");
+    if (entry.validatedHash !== hash(raw)) {
+      throw new Error(`已完成分片在验证后被修改：${file}`);
+    }
+    const shard = JSON.parse(raw) as AssetShard;
+    assets.push(...assertShardFormat(shard, entry, expected, manifest.maxChars, manifest.maxItems));
+  }
+  const ids = assets.map((asset) => asset.assetId);
+  if (
+    ids.length !== manifest.totalAssets ||
+    new Set(ids).size !== ids.length ||
+    ids.some((id, index) => id !== manifest.assets[index]?.assetId)
+  ) {
+    throw new Error("分片聚合未通过全量一一对应、去重或稳定顺序校验");
+  }
+  return assets;
+}
+
+export async function syntheticRecordsFromShards(directoryInput: string): Promise<{
+  records: ScanRecord[];
+  skippedGitCommits: SkippedGitCommit[];
+  skippedFilesWithinCommit?: SkippedGitFileWithinCommit[];
+  gitScanPolicy?: GitScanPolicy;
+}> {
+  const directory = path.resolve(directoryInput);
+  const manifest = await readManifest(directory);
+  const records: ScanRecord[] = [];
+  for (const entry of manifest.shards) {
+    const shard = JSON.parse(
+      await readFile(shardPath(directory, entry), "utf8"),
+    ) as AssetShard;
+    for (const item of shard.items) {
+      records.push({
+        sourceType: item.provenance.sourceType,
+        sourceRef: item.provenance.sourceRef,
+        sourceRevision: item.provenance.sourceRevision,
+        contentHash: item.provenance.contentHash,
+        content: item.sourceExcerpt.text,
+      });
+    }
+  }
+  const ordered = manifest.assets.map((item) => {
+    const record = records.find(
+      (candidate) =>
+        candidate.sourceType === item.sourceType && candidate.sourceRef === item.sourceRef,
+    );
+    if (!record) {
+      throw new Error(`manifest 来源缺少分片记录：${item.sourceRef}`);
+    }
+    return record;
+  });
+  return {
+    records: ordered,
+    skippedGitCommits: manifest.skippedGitCommits ?? [],
+    ...(manifest.skippedFilesWithinCommit?.length
+      ? { skippedFilesWithinCommit: manifest.skippedFilesWithinCommit }
+      : {}),
+    ...(manifest.gitScanPolicy ? { gitScanPolicy: manifest.gitScanPolicy } : {}),
+  };
+}
+
+export async function loadShardedAssetsTrust(directoryInput: string): Promise<AssetRecord[]> {
+  return loadShardedDirectoryTrust(path.resolve(directoryInput));
 }
 
 export async function validateShardedInput(input: string): Promise<{

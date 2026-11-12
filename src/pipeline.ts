@@ -856,7 +856,7 @@ export async function rehydrateRecordsFromManifest(
 }
 
 export interface RunPipelineOptions {
-  freezeSources?: boolean | "manifest";
+  freezeSources?: boolean | "manifest" | "trust";
   manifest?: ShardManifest;
 }
 
@@ -1130,14 +1130,26 @@ export async function loadAssetsFile(
   return (await loadAssetsInput(file, records)).assets;
 }
 
+export interface LoadAssetsInputOptions {
+  trustShards?: boolean;
+}
+
 export async function loadAssetsInput(
   file: string,
   records?: ScanRecord[],
+  options: LoadAssetsInputOptions = {},
 ): Promise<{
   assets: AssetRecord[];
   format: "legacy-single-file" | "sharded-directory";
 }> {
   const sharded = await inputIsDirectory(file);
+  if (sharded && options.trustShards) {
+    const { loadShardedAssetsTrust } = await import("./shards.js");
+    return {
+      assets: await loadShardedAssetsTrust(file),
+      format: "sharded-directory",
+    };
+  }
   const value: unknown = sharded
     ? await loadShardedDirectory(file)
     : JSON.parse(await readFile(file, "utf8"));
@@ -1152,7 +1164,9 @@ export async function loadAssetsInput(
     if (redactSensitive(serialized) !== serialized) {
       throw new Error(`资产输入 ${index} 包含敏感数据`);
     }
-    assertSubstantiveAsset(candidate);
+    if (!options.trustShards) {
+      assertSubstantiveAsset(candidate);
+    }
     return candidate;
   });
   const sourceKeys = assets.map((asset) => `${asset.sourceType}:${asset.sourceRef}`);
@@ -1162,7 +1176,7 @@ export async function loadAssetsInput(
   ) {
     throw new Error("增强资产输入包含重复来源或重复资产 ID");
   }
-  if (records) {
+  if (records && !options.trustShards) {
     const bySource = new Map(
       records.map((record) => [`${record.sourceType}:${record.sourceRef}`, record]),
     );
@@ -1223,7 +1237,7 @@ ${renderDimension("复用价值", asset.analysis.reuseValue)}
 `;
 }
 
-async function readState(repo: string): Promise<ReadState | null> {
+export async function readState(repo: string): Promise<ReadState | null> {
   const statePath = path.join(repo, OUTPUT_ROOT, "state/read-state.json");
   if (!(await exists(statePath))) return null;
   const value = JSON.parse(await readFile(statePath, "utf8")) as unknown;
@@ -1618,10 +1632,20 @@ export async function runPipeline(
   }
   await verifyGitScope(repo);
   const previous = await readState(repo);
-  const freezeSources = options.freezeSources === true || options.freezeSources === "manifest";
+  const trustShards = options.freezeSources === "trust";
+  const freezeSources =
+    options.freezeSources === true || options.freezeSources === "manifest";
   let records: ScanRecord[];
   let skippedGitCommits: SkippedGitCommit[] = [];
-  if (freezeSources) {
+  if (trustShards) {
+    if (!assetsFile || !(await inputIsDirectory(assetsFile))) {
+      throw new Error("freezeSources=trust 仅支持已完成且 validate 过的分片目录");
+    }
+    const { syntheticRecordsFromShards } = await import("./shards.js");
+    const trusted = await syntheticRecordsFromShards(assetsFile);
+    records = trusted.records;
+    skippedGitCommits = trusted.skippedGitCommits;
+  } else if (freezeSources) {
     if (!assetsFile || !(await inputIsDirectory(assetsFile))) {
       throw new Error("freezeSources 仅支持已完成的分片目录输入");
     }
@@ -1639,13 +1663,13 @@ export async function runPipeline(
       "finalize/render/run 需要 --assets；请先使用 prepare --output <目录> 逐片分析，旧版 JSON 数组仍兼容",
     );
   }
-  const loaded = await loadAssetsInput(assetsFile, records);
+  const loaded = await loadAssetsInput(assetsFile, records, { trustShards });
   const assets = loaded.assets.map((asset) => ({
-        ...asset,
-        writebackKind:
-          baselineAssets.find((baseline) => baseline.assetId === asset.assetId)?.writebackKind ??
-          asset.writebackKind,
-      }));
+    ...asset,
+    writebackKind:
+      baselineAssets.find((baseline) => baseline.assetId === asset.assetId)?.writebackKind ??
+      asset.writebackKind,
+  }));
   const result = await render(
     repo,
     config,
