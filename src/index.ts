@@ -9,21 +9,27 @@ export {
   plan,
   prepare,
   prepareShardPipeline,
+  readState,
   redactSensitive,
   render,
   renderAsset,
   rehydrateRecordsFromManifest,
   runPipeline,
+  type LoadAssetsInputOptions,
+  type RunPipelineOptions,
   scan,
   sha256,
   verifyGitScope,
   verifySecondRun,
 } from "./pipeline.js";
 export {
+  assertCompletedShardsFormatOnly,
   inputIsDirectory,
+  loadShardedAssetsTrust,
   loadShardedDirectory,
   prepareShards,
   readShardManifest,
+  syntheticRecordsFromShards,
   validateShardedInput,
 } from "./shards.js";
 export { assertSubstantiveAsset } from "./quality.js";
@@ -68,4 +74,3 @@ export type {
   DeliverWorkflowOptions,
   StartWorkflowOptions,
 } from "./workflow.js";
-export type { RunPipelineOptions } from "./pipeline.js";

@@ -549,4 +549,72 @@ describe("零配置 start/deliver", () => {
       "标准 docs 受管文件被人工编辑",
     );
   });
+
+  it("validate 后变更来源时 deliver 仍仅聚合信任分片", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "asset-trust-deliver-"));
+    temporary.push(repo);
+    await mkdir(path.join(repo, "spec"), { recursive: true });
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await writeFile(
+      path.join(repo, "package.json"),
+      JSON.stringify({ name: "trust-deliver-fixture", private: true }),
+      "utf8",
+    );
+    await writeFile(path.join(repo, "src/App.tsx"), "export const App = () => null;\n", "utf8");
+    await writeFile(
+      path.join(repo, "spec/checkout.md"),
+      "# 结账需求\n必须支持明确的成功和失败验收路径。\n",
+      "utf8",
+    );
+    await git(repo, ["init"]);
+    await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await git(repo, ["config", "user.name", "Trust Deliver"]);
+    await git(repo, ["config", "user.email", "trust@example.invalid"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
+    await git(repo, [
+      "remote",
+      "add",
+      "origin",
+      "https://example.invalid/demo/trust-deliver-fixture.git",
+    ]);
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "fixture: trust deliver baseline"]);
+    await git(repo, ["checkout", "-b", "asset-compounding/trust"]);
+    const started = await startWorkflow({ cwd: repo, yes: true, maxChars: 2_000 });
+    for (const file of started.pendingShards) {
+      await enrichShard(file);
+      await validateShardedInput(file);
+    }
+    await writeFile(
+      started.retrospective,
+      `${JSON.stringify(
+        {
+          maxHelp: "分片让小上下文模型可以逐项完成分析并保留断点。",
+          frictionAndTime: "测试实践主要耗时在逐片补充四维证据。",
+          coverageGaps: "当前 fixture 未覆盖真实截图和外部设计平台。",
+          improvements: "后续增加真实仓库截图采集和链接检查。",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const requirement = path.join(repo, "spec/checkout.md");
+    await writeFile(
+      requirement,
+      `${await readFile(requirement, "utf8")}\n\n## validate 后篡改\n不应阻止 trust deliver。\n`,
+      "utf8",
+    );
+    await git(repo, ["add", requirement]);
+    await git(repo, ["commit", "-m", "chore: mutate requirement after validate"]);
+    await expect(
+      runPipeline(repo, started.effectiveConfig, started.directory),
+    ).rejects.toThrow();
+    const delivered = await deliverWorkflow({ cwd: repo, yes: true });
+    expect(delivered.delivery.assets.length).toBeGreaterThan(0);
+    expect(delivered.verification.secondRunZeroDiff).toBe(true);
+    expect(
+      await readFile(path.join(repo, "docs/07-AI资产/资产复利/资产复利实践报告.md"), "utf8"),
+    ).toContain("# 资产复利实践报告");
+  });
 });

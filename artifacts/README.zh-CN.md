@@ -1,9 +1,9 @@
 # `asset-compound` 0.1.12 离线安装包
 
 `asset-compound-0.1.12.tgz` 以本 PR 合并后的 `main` 为唯一源码基线，包含
-manifest 冻结交付（`deliver` 在已完成分片目录上跳过重复扫描）、交付时以
-`contentHash` 校验来源内容且 `sourceRevision` 以 manifest 为准（prepare 后
-commit 同名文件不再阻塞 deliver）、有效 Git 提交扫描与保守事务过滤、`start`
+deliver 信任分片路径（全部 validate 完成后仅 `assertCompletedShardsFormatOnly`
+聚合，不再 `rehydrate`/`verifySecondRun`）、CLI finalize 仍可用
+`freezeSources=manifest` 重验来源、有效 Git 提交扫描与保守事务过滤、`start`
 阶段事务过滤、默认 `maxChars=6000`/`maxItems=2`、闯关默认单 requirement、默认
 最多 10 片的无损平衡，以及 `skippedGitCommits` / `gitScanPolicy` 留痕。它同时
 保留强化后的中文 AI-TASK/分片/SKILL 契约、文件级 diff/hunk、受控 post-image
