@@ -23,9 +23,7 @@ Git 片必须先读 diff：先看 `GIT_FILE/GIT_STATUS` 与 `PATCH_BEGIN…PATCH
 `文件路径@commit + @@ hunk 定位`。patch 截断时写 gap，禁止打开全仓或完整大文件补齐，
 也禁止推断 diff 未显示的调用方、运行结果或业务事实。
 
-Git 来源默认仅最近 20 次提交（`maxCommits=20`），不是全历史。处理 shard 时只提炼
-业务/架构/接口/数据/可复用代码模式；忽略 eslint、webpack、babel、tsconfig、prettier、
-lockfile、纯依赖升级、CI/format-only、editorconfig 等事务性产物。
-`skippedGitCommits` 仅用于 R1/R6 追溯，不是待分析资产，禁止补造；确需纳入时停止并
-用 `--include-transactional-commits` 新建 workspace。默认最多 10 片；预算无法无损
-容纳时必须失败并调节 maxShards/maxChars/maxItems。
+Git 来源已由 `start` 预筛，默认 **10 次有效提交**（`maxCommits` 指有效数）。片内
+每条记录均可提炼；`skippedGitCommits` 仅用于 R1/R6 追溯，禁止补造。确需纳入被跳过
+提交时停止并用 `--include-transactional-commits` 新建 workspace。默认最多 10 片、
+`maxChars=6000`、`maxItems=2`；预算无法无损容纳时必须 fail-closed。

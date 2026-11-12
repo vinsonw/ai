@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import writeFileAtomic from "write-file-atomic";
+import type { GitScanStats } from "./pipeline.js";
 import { assertSubstantiveAsset } from "./quality.js";
 import { assertValid, validateAsset } from "./schema.js";
 import type {
@@ -12,7 +13,10 @@ import type {
   ShardManifest,
   ShardManifestEntry,
   ShardProvenance,
+  GitScanPolicy,
+  OmittedRequirementSource,
   SkippedGitCommit,
+  SkippedGitFileWithinCommit,
 } from "./types.js";
 
 const MANIFEST = "manifest.json";
@@ -152,6 +156,9 @@ export interface PrepareShardsOptions {
   maxItems?: number;
   maxShards?: number;
   skippedGitCommits?: SkippedGitCommit[];
+  skippedFilesWithinCommit?: SkippedGitFileWithinCommit[];
+  gitScanPolicy?: GitScanPolicy;
+  omittedRequirementSources?: OmittedRequirementSource[];
   resume?: boolean;
 }
 
@@ -167,6 +174,7 @@ export interface PrepareShardsResult {
   maxItemsMode: "auto" | "fixed";
   maxShards: number;
   resumed: boolean;
+  gitScanStats?: GitScanStats;
 }
 
 function resultFor(
@@ -316,7 +324,7 @@ export async function prepareShards(
   options: PrepareShardsOptions = {},
 ): Promise<PrepareShardsResult> {
   const directory = path.resolve(output);
-  const maxChars = options.maxChars ?? 12_000;
+  const maxChars = options.maxChars ?? 6_000;
   const maxShards = options.maxShards ?? 10;
   const skippedGitCommits = options.skippedGitCommits ?? [];
   if (!Number.isInteger(maxChars) || maxChars < 32) {
@@ -422,6 +430,13 @@ export async function prepareShards(
     completedAssets: 0,
     assets: assets.map(provenance),
     skippedGitCommits,
+    ...(options.skippedFilesWithinCommit?.length
+      ? { skippedFilesWithinCommit: options.skippedFilesWithinCommit }
+      : {}),
+    ...(options.gitScanPolicy ? { gitScanPolicy: options.gitScanPolicy } : {}),
+    ...(options.omittedRequirementSources?.length
+      ? { omittedRequirementSources: options.omittedRequirementSources }
+      : {}),
     shards: entries,
   };
   manifest.manifestHash = manifestDigest(manifest);

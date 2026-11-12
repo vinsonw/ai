@@ -29,12 +29,9 @@ Git 片必须先读 diff：先看 `GIT_FILE/GIT_STATUS` 和 `PATCH_BEGIN…PATCH
 `@@ ... @@` hunk 提炼；提交消息不能替代代码证据。evidence 必须包含
 `文件路径@commit + @@ hunk 定位`。patch 截断时写入 gaps，禁止打开全仓或完整大文件
 补齐，也不得推断 diff 未显示的调用方或运行结果。
-Git 来源默认仅最近 20 次提交（`maxCommits=20`），不是全历史；不得暗示已覆盖全部提交。
-
-处理 shard 时只提炼业务/架构/接口/数据/可复用代码模式；忽略事务性提交及
-eslint、webpack、babel、tsconfig、prettier、lockfile、纯依赖升级、CI/format-only、
-editorconfig 等产物。`skippedGitCommits` 只是 R1/R6 跳过证据，不是资产；禁止补造。
-确需纳入时以 `--include-transactional-commits` 新建 workspace 重跑。
+Git 来源已由 `start` 预筛，默认仅 **10 次有效提交**（跳过的不占名额），不是全历史。
+片内每条记录均可提炼；`skippedGitCommits` 只是 R1/R6 引用证据，不是资产，禁止补造。
+确需纳入被跳过提交时以 `--include-transactional-commits` 新建 workspace 重跑。
 
 ## 零/低配置规则
 
@@ -42,7 +39,7 @@ editorconfig 等产物。`skippedGitCommits` 只是 R1/R6 跳过证据，不是�
 - 自动发现常见 requirement 路径，默认与 git 组成两类来源。
 - 默认至多 10 片并自动平衡资产；任一资产或证据无法在预算内完整容纳时会失败，
   必须按错误提示调整 `--max-shards/--max-chars/--max-items`，不得静默删减。
-- 找到多个需求目录时，若用户允许全部使用，传 `--yes`；否则只询问一个最小选择并用 `--requirements <glob>`。
+- 找到多个需求目录时，传 `--yes` 默认只纳入 1 份 requirement（见 manifest 未纳入清单）；否则用 `--requirements <glob>` 明确选择。
 - 稳定 workspace 默认在 `.git/asset-compound/`，不能移动到应用源码目录。
 - `run.yaml` 只作为高级覆盖；正常流程不要求用户编写。
 

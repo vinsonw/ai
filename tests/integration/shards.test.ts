@@ -412,10 +412,10 @@ describe("零配置 start/deliver", () => {
       "提交消息只作意图线索",
       "禁止打开全仓或完整大文件",
       "PATCH_TRUNCATED",
-      "maxCommits=20",
+      "10 次有效提交",
       "不是全仓历史",
-      "资产提炼范围",
-      "webpack",
+      "本轮规模摘要",
+      "CLI 阶段完成事务过滤",
       "skippedGitCommits",
       "--include-transactional-commits",
       "exit 0 才表示该片完成",
@@ -427,7 +427,7 @@ describe("零配置 start/deliver", () => {
       expect(task).toContain(constraint);
     }
     const effectiveBefore = await readFile(started.effectiveConfig, "utf8");
-    expect(effectiveBefore).toContain("spec/**/*.md");
+    expect(effectiveBefore).toContain("spec/checkout.md");
     await expect(
       startWorkflow({ cwd: repo, yes: true, baseBranch: "other" }),
     ).rejects.toThrow("resume 不能更改");

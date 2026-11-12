@@ -4,8 +4,29 @@ export type ChangeKind = "新增" | "增量" | "未变";
 export interface SourceSet {
   type: SourceType;
   include?: string[];
+  /** 计入资产的有效 Git 提交数上限；跳过的事务提交不占名额。 */
   maxCommits?: number;
   includeTransactionalCommits?: boolean;
+  maxBusinessFilesPerCommit?: number;
+}
+
+export interface GitScanPolicy {
+  maxEffectiveCommits: number;
+  maxBusinessFilesPerCommit: number;
+  messageFiltersEnabled: boolean;
+  transactionalPathPatterns: string[];
+}
+
+export interface OmittedRequirementSource {
+  path: string;
+  reason: string;
+}
+
+export interface SkippedGitFileWithinCommit {
+  commit: string;
+  path: string;
+  reasonCode: "per-commit-file-cap";
+  reason: string;
 }
 
 export interface RunConfig {
@@ -81,7 +102,14 @@ export interface SkippedGitCommit {
   treeHash: string;
   contentHash: string;
   subject: string;
-  reasonCode: "dependency-lockfile-only" | "tool-config-only" | "formatting-only";
+  reasonCode:
+    | "dependency-lockfile-only"
+    | "tool-config-only"
+    | "formatting-only"
+    | "message-transactional"
+    | "transactional-paths-only"
+    | "merge-noise"
+    | "revert-noise";
   reason: string;
   files: string[];
 }
@@ -161,5 +189,8 @@ export interface ShardManifest {
   completedAssets: number;
   assets: ShardProvenance[];
   skippedGitCommits?: SkippedGitCommit[];
+  skippedFilesWithinCommit?: SkippedGitFileWithinCommit[];
+  gitScanPolicy?: GitScanPolicy;
+  omittedRequirementSources?: OmittedRequirementSource[];
   shards: ShardManifestEntry[];
 }

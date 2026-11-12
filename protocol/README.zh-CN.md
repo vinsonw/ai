@@ -38,10 +38,10 @@ npx @vinsonw2/asset-compound deliver --yes
 - AI 每轮只读 manifest 和第一条 pending shard；不得加载全量、猜目录或补读被截断全文。
 - 唯一输出是原地覆盖当前 shard 的纯 JSON，只能修改 `items[].asset` 语义字段；
   禁止改源码、原始 docs、manifest、配置或其他 shard。
-- `maxChars` 是每片来源摘录总字符预算，`maxItems` 是每片最大资产数；默认
-  `maxShards=10`，`maxItems` 自动计算并按资产字符预算做连续、确定性的平衡聚合。
-  10 片无法无损容纳时 fail-closed，并提示调整 maxShards/maxChars/maxItems。
-- Git 历史默认仅最近 **20** 次提交（`maxCommits=20`），按 commit 的变更文件拆成资产；
+- `maxChars` 默认 **6000**，`maxItems` 默认 **2**，`maxShards=10`；按资产字符预算做
+  确定性平衡聚合。预算不足时 fail-closed，提示调整 maxShards/maxChars/maxItems。
+- Git 默认 **10 次有效提交**（跳过的事务提交不占名额）；事务过滤在 `start` 完成。
+  按 commit 的非事务变更文件拆成资产；
   摘录包含结构化 `GIT_COMMIT/GIT_FILE/GIT_STATUS`、文件级 patch/hunk 和受控的变更后
   源码片段；不向模型灌入全仓、完整大文件，也不暗示已扫描全历史。
 - 超长单资产采用确定性、按完整行且保留 Git hunk 定位的首尾摘录，不把完整
