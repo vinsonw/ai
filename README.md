@@ -3,16 +3,18 @@
 编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，按标准
 `docs/` 分类目录沉淀为可增量、可追溯、可验收的资产。
 
-npm 公开版本 `0.1.14`；包内固定携带可离线安装的 `0.1.14` payload（修复 Windows
-下 `assertOutputPath` 因路径分隔符误判的拒绝写入；deliver 信任已完成分片仅做格式聚合，
-不再 rehydrate / verifySecondRun；CLI finalize 仍可用 `freezeSources=manifest` 重验来源）。
+npm 公开版本 `0.1.19`；包内固定携带可离线安装的 `0.1.19` payload 与
+`asset-compound-0.1.19-source.zip` 源码备份（单一 Windows
+兼容 bundle：`assertOutputPath`、`verifyGitScope`、`safeTarget` 与 workflow session
+仓库路径在 POSIX 前缀比较前统一分隔符；deliver 仅聚合写盘（QA 仅在 validate）；不再 rehydrate / verifySecondRun / 复盘或
+实质重检；CLI finalize 仍可用 `freezeSources=manifest` 重验来源）。
 
 ## 最短路径：本地 tgz + 两步交付
 
 在 React 项目根目录安装本地 tarball，不需要 `REPO` / `WORK` 环境变量，也不需要手写 `run.yaml`：
 
 ```bash
-npm install --offline --no-save --package-lock=false /absolute/path/to/asset-compound-0.1.14.tgz
+npm install --offline --no-save --package-lock=false /absolute/path/to/asset-compound-0.1.19.tgz
 npx asset-compound start --yes
 ```
 
@@ -276,12 +278,85 @@ npx asset-compound finalize \
 - CLI 不创建业务分支、不 commit、不 push、不创建 PR。
 - scan 原文和模型凭证不得进入仓库、日志或配置。
 
-## npm 包内容
+## 本地构建
 
-`0.1.14` tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、
-`prompts/`、`protocol/`、可选 Cursor Skill 和 `artifacts/`。`artifacts/` 中只
-包含一份 `asset-compound-0.1.14.tgz`；该 payload bundle 了全部生产依赖，可在
-空 npm cache、无 registry 网络的干净目录中安装。
+要求 **Node.js 20+**、**Yarn Classic 1.x**（`yarn -v` 应为 1.22.x）、Git。
+
+```bash
+yarn install --frozen-lockfile
+yarn run typecheck
+yarn test
+yarn build
+yarn smoke
+yarn smoke:packed
+yarn artifacts
+```
+
+`yarn artifacts` 在 `artifacts/` 生成内层 `asset-compound-<version>.tgz`、源码
+`asset-compound-<version>-source.zip` 并刷新 `SHA256SUMS`。发布前须先
+`yarn run check` 再执行 `yarn artifacts`。
+
+## 本地发布后本地使用
+
+### 方式 A：内层离线 tgz（推荐，无 registry）
+
+从已发布的**外层**包取出内层 payload，或直接使用仓库 `artifacts/`：
+
+```bash
+npm pack @vinsonw2/asset-compound@0.1.19
+tar -xzf vinsonw2-asset-compound-0.1.19.tgz
+cd package/artifacts && sha256sum -c SHA256SUMS
+npm install --offline --no-save --package-lock=false ./asset-compound-0.1.19.tgz
+```
+
+在目标 React 仓库根目录：
+
+```bash
+npx asset-compound start --yes
+npx asset-compound deliver --yes
+```
+
+### 方式 B：yarn link / path 指向源码构建
+
+内网从 `asset-compound-0.1.19-source.zip` 解压后：
+
+```bash
+unzip asset-compound-0.1.19-source.zip -d asset-compound-src
+cd asset-compound-src
+yarn install --frozen-lockfile && yarn build
+yarn link
+```
+
+在目标项目：
+
+```bash
+yarn link @vinsonw2/asset-compound
+npx asset-compound start --yes
+```
+
+或使用 `file:` 依赖（不污染全局 link）：
+
+```bash
+npm install --no-save file:/absolute/path/to/asset-compound-src
+```
+
+> 生产验收仍建议以内层 tgz 的 `npm install --offline` 为准；link/path 仅用于联调。
+
+## npm 外层 artifacts 结构
+
+`npm pack @vinsonw2/asset-compound@0.1.19` 的外层 tarball 在
+`package/artifacts/` 固定携带三类文件：
+
+```text
+package/artifacts/
+├── asset-compound-0.1.19.tgz          # 内层 CLI，bundledDependencies，可离线安装
+├── asset-compound-0.1.19-source.zip     # 源码备份（无 node_modules / .git）
+├── SHA256SUMS                           # 上述两文件的 SHA-256
+└── README.zh-CN.md                      # 离线安装与解压说明
+```
+
+外层包主体仍含 `dist/`、`schemas/`、`templates/`、`prompts/`、`protocol/`、
+Skill 与 adapters。内层 payload 从不包含 `artifacts/`，避免递归打进自身。
 
 ESM：
 
@@ -294,28 +369,21 @@ import {
 } from "@vinsonw2/asset-compound";
 ```
 
-内层 payload 从 `0.1.14` 干净 packlist 生成，不包含 `artifacts/`。npm pack
-写到仓库外的临时目录，因此不会把外层包递归打入内层 payload。内层文件的
-SHA-256 记录在 `artifacts/SHA256SUMS`，中文离线步骤见
-`artifacts/README.zh-CN.md`。
-
-## 开发与发布检查
+## 发布检查
 
 ```bash
-corepack enable
-pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm run test
-pnpm run build
-pnpm run smoke
-pnpm run smoke:packed
-pnpm audit --prod
+yarn install --frozen-lockfile
+yarn run check
+yarn smoke:packed
+yarn artifacts
 npm pack --dry-run
+npm audit --production
 ```
 
-`smoke:packed` 从全新 React 风格 fixture 在项目根目录本地安装 packed tgz，不使用手写 YAML 或 REPO/WORK 环境变量，执行 `start --yes`、模拟 AI 逐片输出、resume 和 `deliver --yes`，并验证二次 zero diff。
+`smoke:packed` 从全新 React 风格 fixture 本地安装 packed tgz，执行
+`start --yes`、模拟 AI 逐片、`deliver --yes` 并验证 zero diff。
 
-本 PR 不执行发布。评审通过后由有 `@vinsonw2` scope 权限的账号执行：
+由有 `@vinsonw2` scope 权限的账号发布：
 
 ```bash
 npm publish --access public --registry=https://registry.npmjs.org/

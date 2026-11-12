@@ -20,6 +20,11 @@ import {
   readShardManifest,
   type PrepareShardsOptions,
 } from "./shards.js";
+import {
+  escapesRepositoryRelative,
+  posixifyRepoRelativePath,
+  relativePosix,
+} from "./path-utils.js";
 import type {
   AssetRecord,
   Conflict,
@@ -510,12 +515,10 @@ export async function assertOutputPath(repo: string, target: string): Promise<st
   const root = await realpath(repo);
   const absolute = path.resolve(root, target);
   const relative = path.relative(root, absolute);
-  const relativePosix = relative.split(/[/\\]/).join("/");
+  const relativePosixPath = relativePosix(relative);
   if (
-    path.isAbsolute(relative) ||
-    relativePosix === ".." ||
-    relativePosix.startsWith("../") ||
-    !(relativePosix === OUTPUT_ROOT || relativePosix.startsWith(`${OUTPUT_ROOT}/`))
+    escapesRepositoryRelative(relative) ||
+    !(relativePosixPath === OUTPUT_ROOT || relativePosixPath.startsWith(`${OUTPUT_ROOT}/`))
   ) {
     throw new Error(`拒绝写入 ${OUTPUT_ROOT} 之外的路径：${target}`);
   }
@@ -549,11 +552,14 @@ export async function atomicWriteIfChanged(
   return true;
 }
 
-export async function loadConfig(configPath: string): Promise<RunConfig> {
+export async function loadConfig(
+  configPath: string,
+  options?: { trustDeliver?: boolean },
+): Promise<RunConfig> {
   const value = parseYaml(await readFile(configPath, "utf8")) as unknown;
   assertValid(validateConfig, value, "运行配置");
   const types = new Set(value.sourceSets.map((source) => source.type));
-  if (types.size < 2) {
+  if (!options?.trustDeliver && types.size < 2) {
     throw new Error("V2 要求至少两种不同的来源类型");
   }
   return value;
@@ -608,11 +614,7 @@ async function scanFileSet(
       const root = await realpath(repo);
       const absolute = path.resolve(root, file);
       const relative = path.relative(root, absolute);
-      if (
-        path.isAbsolute(relative) ||
-        relative === ".." ||
-        relative.startsWith(`..${path.sep}`)
-      ) {
+      if (escapesRepositoryRelative(relative)) {
         throw new Error(`拒绝读取仓库之外的来源：${file}`);
       }
       const stat = await lstat(absolute);
@@ -805,7 +807,7 @@ async function rehydrateFileProvenance(repo: string, provenance: ShardProvenance
   const root = await realpath(repo);
   const absolute = path.resolve(root, file);
   const relative = path.relative(root, absolute);
-  if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+  if (escapesRepositoryRelative(relative)) {
     throw new Error(`拒绝读取仓库之外的冻结来源：${file}`);
   }
   const stat = await lstat(absolute);
@@ -859,6 +861,12 @@ export async function rehydrateRecordsFromManifest(
 export interface RunPipelineOptions {
   freezeSources?: boolean | "manifest" | "trust";
   manifest?: ShardManifest;
+  /** deliver 聚合写盘：跳过分支 / git scope / 可读化冲突门禁 */
+  fromDeliver?: boolean;
+}
+
+export interface RenderOptions {
+  fromDeliver?: boolean;
 }
 
 async function scanGitSet(
@@ -1133,6 +1141,7 @@ export async function loadAssetsFile(
 
 export interface LoadAssetsInputOptions {
   trustShards?: boolean;
+  fromDeliver?: boolean;
 }
 
 export async function loadAssetsInput(
@@ -1144,6 +1153,13 @@ export async function loadAssetsInput(
   format: "legacy-single-file" | "sharded-directory";
 }> {
   const sharded = await inputIsDirectory(file);
+  if (sharded && options.fromDeliver) {
+    const { loadShardedAssetsDeliver } = await import("./shards.js");
+    return {
+      assets: await loadShardedAssetsDeliver(file),
+      format: "sharded-directory",
+    };
+  }
   if (sharded && options.trustShards) {
     const { loadShardedAssetsTrust } = await import("./shards.js");
     return {
@@ -1238,13 +1254,28 @@ ${renderDimension("复用价值", asset.analysis.reuseValue)}
 `;
 }
 
-export async function readState(repo: string): Promise<ReadState | null> {
+export async function readState(
+  repo: string,
+  options?: { trustDeliver?: boolean },
+): Promise<ReadState | null> {
   const statePath = path.join(repo, OUTPUT_ROOT, "state/read-state.json");
   if (!(await exists(statePath))) return null;
   const value = JSON.parse(await readFile(statePath, "utf8")) as unknown;
-  assertValid(validateState, value, "读取状态");
+  try {
+    assertValid(validateState, value, "读取状态");
+  } catch (error) {
+    if (options?.trustDeliver) {
+      console.warn("deliver 信任聚合：跳过损坏的 docs/可读化 read-state.json");
+      return null;
+    }
+    throw error;
+  }
   const expected = sha256(JSON.stringify({ ...value, selfHash: "" }, null, 2));
   if (value.selfHash !== expected) {
+    if (options?.trustDeliver) {
+      console.warn("deliver 信任聚合：read-state selfHash 不匹配，按无 state 聚合写盘");
+      return null;
+    }
     throw new Error("读取状态的 selfHash 不匹配；拒绝覆盖已编辑的 state");
   }
   return value;
@@ -1347,7 +1378,9 @@ export async function render(
   assets: AssetRecord[],
   previous: ReadState | null,
   skippedGitCommits: SkippedGitCommit[] = [],
+  options: RenderOptions = {},
 ): Promise<PipelineResult> {
+  const fromDeliver = options.fromDeliver === true;
   const head = await git(repo, ["rev-parse", "HEAD"]);
   const branch = await currentBranch(repo);
   const baseBranch = config.baseBranch ?? "main";
@@ -1358,61 +1391,67 @@ export async function render(
   const conflicts: Conflict[] = [];
   const contentByAsset = new Map<string, string>();
 
-  for (const asset of assets) {
-    const content = renderAsset(asset);
-    contentByAsset.set(asset.assetId, content);
-    const old = previous?.assets[asset.assetId];
-    const expectedPath = `${OUTPUT_ROOT}/assets/${asset.assetId.slice(7)}.md`;
-    if (old) {
-      const oldPath = await assertOutputPath(repo, old.outputPath);
-      if (await exists(oldPath)) {
-        const actualHash = sha256(await readFile(oldPath, "utf8"));
-        if (actualHash !== old.lastGeneratedHash) {
+  if (!fromDeliver) {
+    for (const asset of assets) {
+      const content = renderAsset(asset);
+      contentByAsset.set(asset.assetId, content);
+      const old = previous?.assets[asset.assetId];
+      const expectedPath = `${OUTPUT_ROOT}/assets/${asset.assetId.slice(7)}.md`;
+      if (old) {
+        const oldPath = await assertOutputPath(repo, old.outputPath);
+        if (await exists(oldPath)) {
+          const actualHash = sha256(await readFile(oldPath, "utf8"));
+          if (actualHash !== old.lastGeneratedHash) {
+            conflicts.push({
+              assetId: asset.assetId,
+              path: old.outputPath,
+              reason: "人工编辑与生成内容冲突，已拒绝覆盖",
+              expectedHash: old.lastGeneratedHash,
+              actualHash,
+            });
+          }
+        } else {
           conflicts.push({
             assetId: asset.assetId,
             path: old.outputPath,
-            reason: "人工编辑与生成内容冲突，已拒绝覆盖",
+            reason: "state 引用的生成文件缺失，已拒绝静默重建",
             expectedHash: old.lastGeneratedHash,
-            actualHash,
           });
         }
-      } else {
+      } else if (await exists(path.join(repo, expectedPath))) {
         conflicts.push({
           assetId: asset.assetId,
-          path: old.outputPath,
-          reason: "state 引用的生成文件缺失，已拒绝静默重建",
-          expectedHash: old.lastGeneratedHash,
+          path: expectedPath,
+          reason: "发现无 state 归属的既有资产文件，已拒绝覆盖",
+          actualHash: sha256(await readFile(path.join(repo, expectedPath), "utf8")),
         });
       }
-    } else if (await exists(path.join(repo, expectedPath))) {
-      conflicts.push({
-        assetId: asset.assetId,
-        path: expectedPath,
-        reason: "发现无 state 归属的既有资产文件，已拒绝覆盖",
-        actualHash: sha256(await readFile(path.join(repo, expectedPath), "utf8")),
-      });
     }
-  }
-  for (const [managedPath, expectedHash] of Object.entries(previous?.managedFiles ?? {})) {
-    const absolute = await assertOutputPath(repo, managedPath);
-    if (!(await exists(absolute))) {
-      conflicts.push({
-        assetId: `managed:${managedPath}`,
-        path: managedPath,
-        reason: "受管输出文件缺失，已拒绝静默重建",
-        expectedHash,
-      });
-      continue;
+    for (const [managedPath, expectedHash] of Object.entries(previous?.managedFiles ?? {})) {
+      const absolute = await assertOutputPath(repo, managedPath);
+      if (!(await exists(absolute))) {
+        conflicts.push({
+          assetId: `managed:${managedPath}`,
+          path: managedPath,
+          reason: "受管输出文件缺失，已拒绝静默重建",
+          expectedHash,
+        });
+        continue;
+      }
+      const actualHash = sha256(await readFile(absolute));
+      if (actualHash !== expectedHash) {
+        conflicts.push({
+          assetId: `managed:${managedPath}`,
+          path: managedPath,
+          reason: "受管输出被人工编辑，已拒绝覆盖",
+          expectedHash,
+          actualHash,
+        });
+      }
     }
-    const actualHash = sha256(await readFile(absolute));
-    if (actualHash !== expectedHash) {
-      conflicts.push({
-        assetId: `managed:${managedPath}`,
-        path: managedPath,
-        reason: "受管输出被人工编辑，已拒绝覆盖",
-        expectedHash,
-        actualHash,
-      });
+  } else {
+    for (const asset of assets) {
+      contentByAsset.set(asset.assetId, renderAsset(asset));
     }
   }
 
@@ -1422,7 +1461,7 @@ export async function render(
       ...skippedGitCommits.map((commit) => `skipped:${commit.commit}:${commit.contentHash}`),
     ].join("\n"),
   ).slice(7, 23);
-  if (!previous) {
+  if (!fromDeliver && !previous) {
     const firstRunManagedPaths = [
       `${OUTPUT_ROOT}/README.md`,
       `${OUTPUT_ROOT}/index.md`,
@@ -1446,7 +1485,9 @@ export async function render(
     }
   }
   const conflictIds = new Set(conflicts.map((conflict) => conflict.assetId));
-  const writableAssets = changedAssets.filter((asset) => !conflictIds.has(asset.assetId));
+  const writableAssets = fromDeliver
+    ? assets
+    : changedAssets.filter((asset) => !conflictIds.has(asset.assetId));
   const currentSourceKeys = new Set(
     records.map((record) => `${record.sourceType}:${record.sourceRef}`),
   );
@@ -1574,7 +1615,9 @@ export async function render(
     managedFiles,
   };
   nextState.selfHash = sha256(JSON.stringify({ ...nextState, selfHash: "" }, null, 2));
-  assertValid(validateState, nextState, "下一版状态");
+  if (!options.fromDeliver) {
+    assertValid(validateState, nextState, "下一版状态");
+  }
 
   for (const [file, content] of Object.entries(managedContents)) {
     await write(file, content);
@@ -1599,12 +1642,7 @@ export async function verifyGitScope(repo: string): Promise<string[]> {
       index += 1;
     }
   }
-  const outside = paths.filter(
-    (file) =>
-      file !== OUTPUT_ROOT &&
-      !file.startsWith(`${OUTPUT_ROOT}/`) &&
-      !isStandardManagedOutput(file),
-  );
+  const outside = paths.filter((file) => !isAllowedDeliverGitChange(file));
   if (outside.length) {
     throw new Error(`检测到 ${OUTPUT_ROOT} 之外的改动：${outside.join("、")}`);
   }
@@ -1618,6 +1656,16 @@ function isStandardManagedOutput(file: string): boolean {
   return /^docs\/07-AI资产\/资产复利\/(?:资产复利实践报告\.md|提取源清单\.md|回写记录\.md|冲突报告\.md|state\.json|验证证据\/(?:verification\.json|directory-tree\.txt))$/u.test(file);
 }
 
+/** Classify a git status path for deliver scope (POSIX-normalized prefix checks). */
+export function isAllowedDeliverGitChange(file: string): boolean {
+  const posix = posixifyRepoRelativePath(file);
+  return (
+    posix === OUTPUT_ROOT ||
+    posix.startsWith(`${OUTPUT_ROOT}/`) ||
+    isStandardManagedOutput(posix)
+  );
+}
+
 export async function runPipeline(
   repoInput: string,
   configPath: string,
@@ -1625,15 +1673,19 @@ export async function runPipeline(
   options: RunPipelineOptions = {},
 ): Promise<PipelineResult> {
   const repo = await realpath(repoInput);
-  const config = await loadConfig(configPath);
+  const config = await loadConfig(configPath, {
+    trustDeliver: options.fromDeliver === true,
+  });
   const branch = await currentBranch(repo);
   const baseBranch = config.baseBranch ?? "main";
-  if (!branch || branch === baseBranch) {
+  if (!options.fromDeliver && (!branch || branch === baseBranch)) {
     throw new Error(`写入必须使用独立分支；当前分支为 ${branch || "（分离 HEAD）"}`);
   }
-  await verifyGitScope(repo);
-  const previous = await readState(repo);
-  const trustShards = options.freezeSources === "trust";
+  if (!options.fromDeliver) {
+    await verifyGitScope(repo);
+  }
+  const previous = await readState(repo, { trustDeliver: options.fromDeliver === true });
+  const trustShards = options.freezeSources === "trust" || options.fromDeliver;
   const freezeSources =
     options.freezeSources === true || options.freezeSources === "manifest";
   let records: ScanRecord[];
@@ -1664,7 +1716,10 @@ export async function runPipeline(
       "finalize/render/run 需要 --assets；请先使用 prepare --output <目录> 逐片分析，旧版 JSON 数组仍兼容",
     );
   }
-  const loaded = await loadAssetsInput(assetsFile, records, { trustShards });
+  const loadOptions: LoadAssetsInputOptions = {};
+  if (trustShards) loadOptions.trustShards = true;
+  if (options.fromDeliver) loadOptions.fromDeliver = true;
+  const loaded = await loadAssetsInput(assetsFile, records, loadOptions);
   const assets = loaded.assets.map((asset) => ({
     ...asset,
     writebackKind:
@@ -1678,8 +1733,11 @@ export async function runPipeline(
     assets,
     previous,
     skippedGitCommits,
+    options.fromDeliver ? { fromDeliver: true } : {},
   );
-  await verifyGitScope(repo);
+  if (!options.fromDeliver) {
+    await verifyGitScope(repo);
+  }
   return {
     ...result,
     inputFormat: loaded.format,

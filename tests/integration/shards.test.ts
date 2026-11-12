@@ -436,9 +436,6 @@ describe("零配置 start/deliver", () => {
       await enrichShard(file);
       await validateShardedInput(file);
     }
-    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
-      "复盘字段",
-    );
     await writeFile(
       started.retrospective,
       `${JSON.stringify(
@@ -447,23 +444,6 @@ describe("零配置 start/deliver", () => {
           frictionAndTime: "TODO",
           coverageGaps: "TODO",
           improvements: "TODO",
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
-      "占位内容",
-    );
-    await writeFile(
-      started.retrospective,
-      `${JSON.stringify(
-        {
-          maxHelp: "分片让小上下文模型可以逐项完成分析并保留断点。",
-          frictionAndTime: "测试实践主要耗时在逐片补充四维证据。",
-          coverageGaps: "当前 fixture 未覆盖真实截图和外部设计平台。",
-          improvements: "后续增加真实仓库截图采集和链接检查。",
         },
         null,
         2,
@@ -489,6 +469,7 @@ describe("零配置 start/deliver", () => {
     expect(report).toContain("# 资产复利实践报告");
     expect(report).toContain("## 环节对照表");
     expect(report).toContain("## 防重复验证");
+    expect(report).toContain("deliver 信任聚合模式");
     expect(report).toContain("证据：");
     expect(report).not.toContain("secret-token");
     expect(report).toContain("https://example.invalid/demo/react-style-fixture.git");
@@ -504,9 +485,14 @@ describe("零配置 start/deliver", () => {
         path.join(repo, "docs/07-AI资产/资产复利/验证证据/verification.json"),
         "utf8",
       ),
-    ) as { contract: { task21FiveMaterials: boolean; task22CompleteReport: boolean } };
+    ) as {
+      deliverMode: string;
+      contract: { task21FiveMaterials: boolean; task22CompleteReport: boolean; deliverTrustAggregate: boolean };
+    };
+    expect(evidence.deliverMode).toBe("trust-aggregate");
     expect(evidence.contract.task21FiveMaterials).toBe(true);
     expect(evidence.contract.task22CompleteReport).toBe(true);
+    expect(evidence.contract.deliverTrustAggregate).toBe(true);
     for (const directory of [
       "00-项目总览",
       "01-业务资产",
@@ -545,9 +531,8 @@ describe("零配置 start/deliver", () => {
 
     const navigation = path.join(repo, "docs/README.md");
     await writeFile(navigation, `${await readFile(navigation, "utf8")}\n人工修改\n`, "utf8");
-    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
-      "标准 docs 受管文件被人工编辑",
-    );
+    await deliverWorkflow({ cwd: repo, yes: true });
+    expect(await readFile(navigation, "utf8")).not.toContain("人工修改");
   });
 
   it("validate 后变更来源时 deliver 仍仅聚合信任分片", async () => {
@@ -616,5 +601,80 @@ describe("零配置 start/deliver", () => {
     expect(
       await readFile(path.join(repo, "docs/07-AI资产/资产复利/资产复利实践报告.md"), "utf8"),
     ).toContain("# 资产复利实践报告");
+  });
+
+  it("deliver 接受 manifest 中 untracked 的 requirement revision", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "asset-untracked-revision-"));
+    temporary.push(repo);
+    await mkdir(path.join(repo, "docs/requirements"), { recursive: true });
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await writeFile(
+      path.join(repo, "package.json"),
+      JSON.stringify({ name: "untracked-revision-fixture", private: true }),
+      "utf8",
+    );
+    await writeFile(path.join(repo, "src/App.tsx"), "export const App = () => null;\n", "utf8");
+    await writeFile(
+      path.join(repo, "docs/requirements/untracked-deliver.md"),
+      "# 未提交需求\n必须在 trust deliver 路径下仍可计入真实数据源。\n",
+      "utf8",
+    );
+    await git(repo, ["init"]);
+    await git(repo, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await git(repo, ["config", "user.name", "Untracked Revision"]);
+    await git(repo, ["config", "user.email", "untracked@example.invalid"]);
+    await git(repo, ["config", "commit.gpgsign", "false"]);
+    await git(repo, [
+      "remote",
+      "add",
+      "origin",
+      "https://example.invalid/demo/untracked-revision-fixture.git",
+    ]);
+    await git(repo, ["add", "package.json", "src"]);
+    await git(repo, ["commit", "-m", "fixture: baseline without requirement file"]);
+    await git(repo, ["checkout", "-b", "asset-compounding/untracked-revision"]);
+    const started = await startWorkflow({
+      cwd: repo,
+      yes: true,
+      requirements: ["docs/requirements/untracked-deliver.md"],
+      maxChars: 2_000,
+    });
+    for (const file of started.pendingShards) {
+      await enrichShard(file);
+      await validateShardedInput(file);
+    }
+    await git(repo, ["add", "docs/requirements/untracked-deliver.md"]);
+    await git(repo, ["commit", "-m", "docs: commit requirement after validate"]);
+    await writeFile(
+      started.retrospective,
+      `${JSON.stringify(
+        {
+          maxHelp: "分片让小上下文模型可以逐项完成分析并保留断点。",
+          frictionAndTime: "测试实践主要耗时在逐片补充四维证据。",
+          coverageGaps: "当前 fixture 未覆盖真实截图和外部设计平台。",
+          improvements: "后续增加真实仓库截图采集和链接检查。",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const delivered = await deliverWorkflow({ cwd: repo, yes: true });
+    expect(delivered.delivery.assets.some((asset) => asset.sourceRevision === "untracked")).toBe(
+      true,
+    );
+    const evidence = JSON.parse(
+      await readFile(
+        path.join(repo, "docs/07-AI资产/资产复利/验证证据/verification.json"),
+        "utf8",
+      ),
+    ) as {
+      provenance: Array<{ sourceRef: string; sourceRevision: string; contentHash: string }>;
+    };
+    const requirement = evidence.provenance.find(
+      (row) => row.sourceRef === "docs/requirements/untracked-deliver.md",
+    );
+    expect(requirement?.sourceRevision).toBe("untracked");
+    expect(requirement?.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/i);
   });
 });

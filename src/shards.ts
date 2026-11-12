@@ -592,6 +592,54 @@ async function persistManifest(directory: string, manifest: ShardManifest): Prom
   await writeJson(path.join(directory, MANIFEST), manifest);
 }
 
+/**
+ * deliver 前置：仅确认 manifest 可读且全部分片 status=completed。
+ * 这是流程是否跑完的门禁，不是 QA 重跑；实质质量门禁在 validate。
+ */
+export async function assertAllShardsCompleted(directoryInput: string): Promise<{
+  format: "sharded-directory";
+  completedAssets: number;
+  totalAssets: number;
+}> {
+  const directory = path.resolve(directoryInput);
+  const manifest = await readManifest(directory);
+  const pending = manifest.shards.filter((entry) => entry.status !== "completed");
+  if (pending.length > 0) {
+    throw new Error(`仍有 ${pending.length} 个未完成分片；请先 validate`);
+  }
+  return {
+    format: "sharded-directory",
+    completedAssets: manifest.completedAssets,
+    totalAssets: manifest.totalAssets,
+  };
+}
+
+export async function loadShardedAssetsDeliver(directoryInput: string): Promise<AssetRecord[]> {
+  const directory = path.resolve(directoryInput);
+  const manifest = await readManifest(directory);
+  if (manifest.shards.some((entry) => entry.status !== "completed")) {
+    throw new Error(
+      `分片尚未全部完成：${manifest.completedAssets}/${manifest.totalAssets}`,
+    );
+  }
+  const assets: AssetRecord[] = [];
+  for (const entry of manifest.shards) {
+    const shard = JSON.parse(
+      await readFile(shardPath(directory, entry), "utf8"),
+    ) as AssetShard;
+    for (const item of shard.items) {
+      const serialized = JSON.stringify(item.asset);
+      if (redact(serialized) !== serialized) {
+        console.warn(
+          `deliver 信任聚合：跳过分片敏感数据重检（validate 已门禁）：${shardPath(directory, entry)}`,
+        );
+      }
+      assets.push(item.asset);
+    }
+  }
+  return assets;
+}
+
 export async function assertCompletedShardsFormatOnly(directoryInput: string): Promise<{
   format: "sharded-directory";
   completedAssets: number;

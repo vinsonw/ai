@@ -1,68 +1,59 @@
-# `asset-compound` 0.1.14 离线安装包
+# `asset-compound` 0.1.19 离线安装包与源码备份
 
-`asset-compound-0.1.14.tgz` 以本 PR 合并后的 `main` 为唯一源码基线，包含
-Windows 下 `assertOutputPath` 路径前缀校验修复（`path.relative` 反斜杠与
-`OUTPUT_ROOT` 正向斜杠对齐）、deliver 信任分片路径（全部 validate 完成后仅
-`assertCompletedShardsFormatOnly` 聚合，不再 `rehydrate`/`verifySecondRun`）、CLI
-finalize 仍可用 `freezeSources=manifest` 重验来源、有效 Git 提交扫描与保守事务过滤、
-`start` 阶段事务过滤、默认 `maxChars=6000`/`maxItems=2`、闯关默认单 requirement、
-默认最多 10 片的无损平衡，以及 `skippedGitCommits` / `gitScanPolicy` 留痕。它同时
-保留强化后的中文 AI-TASK/分片/SKILL 契约、文件级 diff/hunk、受控 post-image
-和标准 docs、2.1/2.2、R1–R6、V1–V8 验收能力。包内置全部生产依赖，可在没有
-registry 网络访问、没有预热 npm cache 的干净目录中本地安装；运行要求 Node.js
-`>=20`、Git `>=2.20.1`。
+## 内层 CLI（离线 npm）
 
-从 `0.1.13` 升级：删除旧内层 `asset-compound-0.1.13.tgz`，仅保留本文件作为
-唯一 canonical 离线 payload；校验 SHA-256 后重新 `npm install --offline`。
+`asset-compound-0.1.19.tgz` 为 **单一 Windows 兼容 bundle**，行为与
+`@vinsonw2/asset-compound@0.1.19` 一致：**deliver 仅聚合写盘**（QA 仅在
+`validate`）；内层 bundle 全部生产依赖，可在无 registry 的目录中
+`npm install --offline`。
 
-生成过程先用 `0.1.14` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
-再仅向 staging 的 `package.json` 加入 `bundledDependencies` 并安装生产依赖。
-内层与 npm 发布版本同为 `0.1.14`，因此不会递归包含自身。
+生成过程先用 `0.1.19` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
+再向 staging 的 `package.json` 加入 `bundledDependencies` 并安装生产依赖。
+内层与 npm 发布版本同为 `0.1.19`，因此不会递归包含自身。
 
-## 校验
+### 校验
 
-同目录的 `SHA256SUMS` 记录了固定 SHA-256。Linux 或 macOS 可在本目录运行：
+同目录的 `SHA256SUMS` 记录内层 tgz 与源码 zip 的固定 SHA-256：
 
 ```bash
 sha256sum -c SHA256SUMS
 ```
 
-在 PowerShell 中可运行：
+PowerShell（内层 tgz）：
 
 ```powershell
-(Get-FileHash .\asset-compound-0.1.14.tgz -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\asset-compound-0.1.19.tgz -Algorithm SHA256).Hash.ToLower()
 ```
 
-结果必须与 `SHA256SUMS` 中的值完全一致。
-
-## 同步到其他平台后安装
-
-将 `asset-compound-0.1.14.tgz` 下载或同步到目标平台，校验 SHA-256 后，在
-tarball 所在目录执行：
+### 安装
 
 ```bash
-npm install --offline ./asset-compound-0.1.14.tgz
+npm install --offline --no-save --package-lock=false ./asset-compound-0.1.19.tgz
 npx asset-compound --version
-npx asset-compound --help
 ```
 
-也可以直接执行本地包中的 CLI：
-
-```bash
-npx --offline --yes --package ./asset-compound-0.1.14.tgz asset-compound --help
-```
-
-在目标 Git 仓库创建独立分支并准备至少一个真实 requirement 文件后，可运行：
+目标 Git 仓库中：
 
 ```bash
 npx asset-compound start --yes
-```
-
-分片完成后执行：
-
-```bash
+# 逐片 validate 后
 npx asset-compound deliver --yes
 ```
 
-该文件固定为内层 `0.1.14` payload。外层 `0.1.14` pack 必须输出到仓库外的临时
-目录，并验证只包含这一份内层 tgz 且 SHA-256 与 `SHA256SUMS` 一致。
+## 源码 zip（内网备份）
+
+`asset-compound-0.1.19-source.zip` 为本版本完整源码树（不含 `node_modules/`、
+`.git/` 及已生成的内层 tgz/旧版 zip）。用于内网归档与离线重建：
+
+```bash
+unzip asset-compound-0.1.19-source.zip -d asset-compound-0.1.19-src
+cd asset-compound-0.1.19-src
+yarn install --frozen-lockfile
+yarn run check
+```
+
+校验 zip：
+
+```bash
+sha256sum -c SHA256SUMS
+```
