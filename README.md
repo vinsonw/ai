@@ -3,16 +3,16 @@
 编辑器无关的 Node.js 20+ / TypeScript 工具：将真实项目材料逐片分析，按标准
 `docs/` 分类目录沉淀为可增量、可追溯、可验收的资产。
 
-npm 公开版本 `0.1.13`；包内固定携带可离线安装的 `0.1.13` payload（deliver
-信任已完成分片仅做格式聚合，不再 rehydrate / verifySecondRun；CLI finalize
-仍可用 `freezeSources=manifest` 重验来源）。
+npm 公开版本 `0.1.14`；包内固定携带可离线安装的 `0.1.14` payload（修复 Windows
+下 `assertOutputPath` 因路径分隔符误判的拒绝写入；deliver 信任已完成分片仅做格式聚合，
+不再 rehydrate / verifySecondRun；CLI finalize 仍可用 `freezeSources=manifest` 重验来源）。
 
 ## 最短路径：本地 tgz + 两步交付
 
 在 React 项目根目录安装本地 tarball，不需要 `REPO` / `WORK` 环境变量，也不需要手写 `run.yaml`：
 
 ```bash
-npm install --offline --no-save --package-lock=false /absolute/path/to/asset-compound-0.1.13.tgz
+npm install --offline --no-save --package-lock=false /absolute/path/to/asset-compound-0.1.14.tgz
 npx asset-compound start --yes
 ```
 
@@ -278,9 +278,9 @@ npx asset-compound finalize \
 
 ## npm 包内容
 
-`0.1.13` tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、
+`0.1.14` tarball 包含 `dist/`、类型声明、`schemas/`、`templates/`、
 `prompts/`、`protocol/`、可选 Cursor Skill 和 `artifacts/`。`artifacts/` 中只
-包含一份 `asset-compound-0.1.13.tgz`；该 payload bundle 了全部生产依赖，可在
+包含一份 `asset-compound-0.1.14.tgz`；该 payload bundle 了全部生产依赖，可在
 空 npm cache、无 registry 网络的干净目录中安装。
 
 ESM：
@@ -294,7 +294,7 @@ import {
 } from "@vinsonw2/asset-compound";
 ```
 
-内层 payload 从 `0.1.13` 干净 packlist 生成，不包含 `artifacts/`。npm pack
+内层 payload 从 `0.1.14` 干净 packlist 生成，不包含 `artifacts/`。npm pack
 写到仓库外的临时目录，因此不会把外层包递归打入内层 payload。内层文件的
 SHA-256 记录在 `artifacts/SHA256SUMS`，中文离线步骤见
 `artifacts/README.zh-CN.md`。
