@@ -14,11 +14,27 @@
 出现 `PATCH_TRUNCATED/PATCH_CAPTURE_TRUNCATED` 时必须在 gaps 写明未覆盖内容；
 禁止打开全仓或完整大文件补齐，禁止推断未显示的调用方、运行结果或业务结论。
 
+## Git 来源窗口
+
+Git 来源默认只覆盖最近 **20** 次提交（`maxCommits=20`），不是全仓历史。
+不得暗示、假设或声称已审阅全部提交；未纳入窗口的内容只能写入 gap。
+
+## 资产提炼范围
+
+处理 shard 时只提炼 **业务规则、架构决策、接口契约、数据模型、可复用代码模式**。
+忽略事务性提交及其产物，不为下列内容单独造“业务资产”：
+
+- eslint / webpack / babel / tsconfig / prettier / editorconfig 等工具与构建配置
+- lockfile、package 清单上的纯依赖升级
+- CI/workflow、format-only、纯工具链或流水线变更
+
+上述跳过项以 manifest / source manifest 中的 `skippedGitCommits` 为权威留痕。
+
 ## 事务性提交边界
 
-manifest/source manifest 中的 `skippedGitCommits` 是 R1/R6 的可追溯证据，
-不是待分析资产。不要为被跳过的 dependency/lockfile、工具配置或纯格式化提交补造资产；
-需要纳入时应停止并要求用 `--include-transactional-commits` 在新 workspace 重跑。
+`skippedGitCommits` 是 R1/R6 的可追溯证据，不是待分析资产。不要为被跳过的
+dependency/lockfile、工具配置、CI/format-only 或纯格式化提交补造资产；需要纳入时
+应停止并要求用 `--include-transactional-commits` 在新 workspace 重跑。
 
 ## 唯一输出与 schema
 

@@ -41,9 +41,9 @@ npx @vinsonw2/asset-compound deliver --yes
 - `maxChars` 是每片来源摘录总字符预算，`maxItems` 是每片最大资产数；默认
   `maxShards=10`，`maxItems` 自动计算并按资产字符预算做连续、确定性的平衡聚合。
   10 片无法无损容纳时 fail-closed，并提示调整 maxShards/maxChars/maxItems。
-- Git 历史按 commit 的变更文件拆成资产，摘录包含结构化
-  `GIT_COMMIT/GIT_FILE/GIT_STATUS`、文件级 patch/hunk 和受控的变更后源码片段；
-  不向模型灌入全仓或完整大文件。
+- Git 历史默认仅最近 **20** 次提交（`maxCommits=20`），按 commit 的变更文件拆成资产；
+  摘录包含结构化 `GIT_COMMIT/GIT_FILE/GIT_STATUS`、文件级 patch/hunk 和受控的变更后
+  源码片段；不向模型灌入全仓、完整大文件，也不暗示已扫描全历史。
 - 超长单资产采用确定性、按完整行且保留 Git hunk 定位的首尾摘录，不把完整
   2000+ 行材料塞入上下文。
 - validate 成功后才原子更新完成标记和分片 hash。
@@ -65,9 +65,11 @@ schema 通过只是第一层。每条资产还必须通过质量门禁：
 Git 片必须先读 diff，再逐个 `@@ ... @@` hunk 提炼。提交消息只能作意图线索；
 evidence 必须包含 `文件路径@commit + @@ hunk 定位`。patch 截断时把未覆盖范围
 写入 gaps，不得打开全仓或完整大文件补齐，也不得推断 diff 外事实。
-依赖/锁文件、工具配置或纯格式化等事务性提交会保守排除；manifest 和最终报告以
-commit/tree/content hash、文件和原因保留 `skippedGitCommits` 证据。它们不是 AI
-资产，模型不得补造；需要纳入时用 `--include-transactional-commits` 新建 workspace。
+依赖/锁文件、eslint/webpack/babel/tsconfig/prettier/editorconfig、CI/format-only、
+纯依赖升级或纯格式化等事务性提交会保守排除；AI 只应提炼业务/架构/接口/数据/可复用
+代码模式。manifest 和最终报告以 commit/tree/content hash、文件和原因保留
+`skippedGitCommits` 证据。它们不是 AI 资产，模型不得补造；需要纳入时用
+`--include-transactional-commits` 新建 workspace。
 
 ## Editor-assisted 与 provider
 

@@ -29,7 +29,11 @@ Git 片必须先读 diff：先看 `GIT_FILE/GIT_STATUS` 和 `PATCH_BEGIN…PATCH
 `@@ ... @@` hunk 提炼；提交消息不能替代代码证据。evidence 必须包含
 `文件路径@commit + @@ hunk 定位`。patch 截断时写入 gaps，禁止打开全仓或完整大文件
 补齐，也不得推断 diff 未显示的调用方或运行结果。
-manifest 中的 `skippedGitCommits` 只是 R1/R6 跳过证据，不是资产；禁止补造。
+Git 来源默认仅最近 20 次提交（`maxCommits=20`），不是全历史；不得暗示已覆盖全部提交。
+
+处理 shard 时只提炼业务/架构/接口/数据/可复用代码模式；忽略事务性提交及
+eslint、webpack、babel、tsconfig、prettier、lockfile、纯依赖升级、CI/format-only、
+editorconfig 等产物。`skippedGitCommits` 只是 R1/R6 跳过证据，不是资产；禁止补造。
 确需纳入时以 `--include-transactional-commits` 新建 workspace 重跑。
 
 ## 零/低配置规则

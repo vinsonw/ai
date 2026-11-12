@@ -153,6 +153,15 @@ describe("incremental pipeline", () => {
     await writeFile(path.join(repo, "eslint.config.js"), "export default [];\n", "utf8");
     await git(repo, ["add", "eslint.config.js"]);
     await git(repo, ["commit", "-m", "chore: configure eslint"]);
+    const eslintCommit = await git(repo, ["rev-parse", "HEAD"]);
+
+    await writeFile(
+      path.join(repo, "webpack.config.js"),
+      "export default { entry: './src/index.ts' };\n",
+      "utf8",
+    );
+    await git(repo, ["add", "webpack.config.js"]);
+    await git(repo, ["commit", "-m", "chore: configure webpack"]);
     const toolCommit = await git(repo, ["rev-parse", "HEAD"]);
 
     await writeFile(path.join(repo, "src/format.ts"), "export   const   value = 1;\n", "utf8");
@@ -178,7 +187,7 @@ describe("incremental pipeline", () => {
     const configPath = path.join(repo, "run.yaml");
     const inspected = await inspectPipeline(repo, configPath);
     expect(inspected.skippedGitCommits.map((commit) => commit.commit).sort()).toEqual(
-      [dependencyCommit, formatCommit, toolCommit].sort(),
+      [dependencyCommit, eslintCommit, formatCommit, toolCommit].sort(),
     );
     for (const skipped of inspected.skippedGitCommits) {
       expect(skipped.treeHash).toMatch(/^[0-9a-f]{40}$/);
@@ -212,7 +221,7 @@ describe("incremental pipeline", () => {
     const manifest = JSON.parse(
       await readFile(path.join(work, "manifest.json"), "utf8"),
     ) as { skippedGitCommits: Array<{ commit: string; reason: string }> };
-    expect(manifest.skippedGitCommits).toHaveLength(3);
+    expect(manifest.skippedGitCommits).toHaveLength(4);
 
     const assets = await assetsFile(repo, configPath);
     const result = await runPipeline(repo, configPath, assets);
@@ -226,7 +235,7 @@ describe("incremental pipeline", () => {
     expect(sourceManifest).toContain("skippedGitCommits:");
     expect(sourceManifest).toContain(dependencyCommit);
     expect(sourceManifest).toContain("dependency-lockfile-only");
-    expect(runRecord).toContain("跳过事务性 Git 提交：3");
+    expect(runRecord).toContain("跳过事务性 Git 提交：4");
     expect(runRecord).toContain(formatCommit);
 
     const config = await loadConfig(configPath);
@@ -239,7 +248,7 @@ describe("incremental pipeline", () => {
       ),
     };
     const unfiltered = await scan(repo, override);
-    for (const commit of [dependencyCommit, formatCommit, toolCommit]) {
+    for (const commit of [dependencyCommit, eslintCommit, formatCommit, toolCommit]) {
       expect(
         unfiltered.some(
           (record) => record.sourceType === "git" && record.sourceRevision === commit,
