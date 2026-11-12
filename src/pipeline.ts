@@ -510,11 +510,12 @@ export async function assertOutputPath(repo: string, target: string): Promise<st
   const root = await realpath(repo);
   const absolute = path.resolve(root, target);
   const relative = path.relative(root, absolute);
+  const relativePosix = relative.split(/[/\\]/).join("/");
   if (
     path.isAbsolute(relative) ||
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    !(relative === OUTPUT_ROOT || relative.startsWith(`${OUTPUT_ROOT}${path.sep}`))
+    relativePosix === ".." ||
+    relativePosix.startsWith("../") ||
+    !(relativePosix === OUTPUT_ROOT || relativePosix.startsWith(`${OUTPUT_ROOT}/`))
   ) {
     throw new Error(`拒绝写入 ${OUTPUT_ROOT} 之外的路径：${target}`);
   }

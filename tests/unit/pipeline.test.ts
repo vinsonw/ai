@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertOutputPath, redactSensitive, sha256 } from "../../src/pipeline.js";
 
 const temporary: string[] = [];
@@ -39,6 +39,19 @@ describe("output boundary", () => {
     await expect(assertOutputPath(repo, "docs/可读化/index.md")).resolves.toContain("index.md");
     await expect(assertOutputPath(repo, "src/index.ts")).rejects.toThrow("之外");
     await expect(assertOutputPath(repo, "docs/可读化/../../package.json")).rejects.toThrow("之外");
+  });
+
+  it("accepts Windows-style relative segments from path.relative", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "asset-boundary-win-"));
+    temporary.push(repo);
+    const target = path.join(repo, "docs", "可读化", "README.md");
+    await mkdir(path.dirname(target), { recursive: true });
+    const relativeSpy = vi.spyOn(path, "relative").mockReturnValue("docs\\可读化\\README.md");
+    try {
+      await expect(assertOutputPath(repo, "docs/可读化/README.md")).resolves.toContain("README.md");
+    } finally {
+      relativeSpy.mockRestore();
+    }
   });
 
   it("rejects a symlink inside the output path", async () => {
