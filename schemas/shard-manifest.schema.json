@@ -26,6 +26,51 @@
     "totalAssets": {"type": "integer", "minimum": 0},
     "completedAssets": {"type": "integer", "minimum": 0},
     "assets": {"type": "array"},
+    "gitScanPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxEffectiveCommits",
+        "maxBusinessFilesPerCommit",
+        "messageFiltersEnabled",
+        "transactionalPathPatterns"
+      ],
+      "properties": {
+        "maxEffectiveCommits": {"type": "integer", "minimum": 1},
+        "maxBusinessFilesPerCommit": {"type": "integer", "minimum": 1},
+        "messageFiltersEnabled": {"type": "boolean"},
+        "transactionalPathPatterns": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "omittedRequirementSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "reason"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "skippedFilesWithinCommit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["commit", "path", "reasonCode", "reason"],
+        "properties": {
+          "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "path": {"type": "string", "minLength": 1},
+          "reasonCode": {"const": "per-commit-file-cap"},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "skippedGitCommits": {
       "type": "array",
       "items": {
@@ -49,7 +94,11 @@
             "enum": [
               "dependency-lockfile-only",
               "tool-config-only",
-              "formatting-only"
+              "formatting-only",
+              "message-transactional",
+              "transactional-paths-only",
+              "merge-noise",
+              "revert-noise"
             ]
           },
           "reason": {"type": "string", "minLength": 1},

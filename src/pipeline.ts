@@ -27,14 +27,21 @@ import type {
   ReadState,
   RunConfig,
   ScanRecord,
+  GitScanPolicy,
   SkippedGitCommit,
+  SkippedGitFileWithinCommit,
   SourceSet,
   SourceType,
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 const GIT_PATCH_CAPTURE_BYTES = 128 * 1024;
-const GIT_PATCH_OUTPUT_CHARS = 32_000;
+export const DEFAULT_MAX_EFFECTIVE_COMMITS = 10;
+export const DEFAULT_MAX_BUSINESS_FILES_PER_COMMIT = 5;
+export const DEFAULT_MAX_CHARS = 6_000;
+export const DEFAULT_MAX_ITEMS = 2;
+export const GIT_SCAN_LOG_LIMIT = 500;
+const GIT_PATCH_OUTPUT_CHARS = 16_000;
 const GIT_POST_IMAGE_MAX_BYTES = 256 * 1024;
 const GIT_POST_IMAGE_OUTPUT_CHARS = 6_000;
 const OUTPUT_ROOT = "docs/可读化";
@@ -196,16 +203,179 @@ const TOOL_CONFIG =
   /(?:^|\/)(?:\.editorconfig|\.eslintrc(?:\..+)?|eslint\.config\.[cm]?[jt]s|\.prettierrc(?:\..+)?|prettier\.config\.[cm]?[jt]s|biome\.jsonc?|\.stylelintrc(?:\..+)?|stylelint\.config\.[cm]?[jt]s|\.commitlintrc(?:\..+)?|commitlint\.config\.[cm]?[jt]s|\.lintstagedrc(?:\..+)?|lint-staged\.config\.[cm]?[jt]s|renovate\.json|\.github\/dependabot\.ya?ml|\.babelrc(?:\..+)?|babel\.config\.[cm]?[jt]s|tsconfig(?:\..+)?\.json|jsconfig\.json|webpack(?:\..+)?\.config\.[cm]?[jt]s|vite\.config\.[cm]?[jt]s|vitest\.config\.[cm]?[jt]s|jest\.config\.[cm]?[jt]s|rollup\.config\.[cm]?[jt]s|tsup\.config\.[cm]?[jt]s|\.github\/workflows\/[^/]+\.ya?ml|\.gitlab-ci\.ya?ml|Jenkinsfile|azure-pipelines\.ya?ml|\.circleci\/config\.ya?ml)$/u;
 const DEPENDENCY_SUBJECT = /(?:^|[\s:(])(?:deps?|dependencies|dependabot|renovate|bump|upgrade)(?:[\s:)]|$)/iu;
 const FORMATTING_SUBJECT = /(?:^|[\s:(])(?:format|formatting|prettier|eslint(?:\s+--fix)?|lint\s*fix)(?:[\s:)]|$)/iu;
+const EDITOR_SETTINGS = /(?:^|\/)\.vscode\/settings\.json$/u;
+const BUSINESS_SUBJECT =
+  /(?:^|[\s:(])(?:feat|fix|feature|bugfix|refactor|hotfix|perf)(?:[\s(:]|$)/iu;
+const TEST_SOURCE =
+  /(?:^|\/)(?:__tests__|tests?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/u;
+const GIT_SCAN_POLICY: GitScanPolicy = {
+  maxEffectiveCommits: DEFAULT_MAX_EFFECTIVE_COMMITS,
+  maxBusinessFilesPerCommit: DEFAULT_MAX_BUSINESS_FILES_PER_COMMIT,
+  messageFiltersEnabled: true,
+  transactionalPathPatterns: [
+    "dependency lockfiles",
+    "dependency manifests (package.json only commits)",
+    "lint/format/build tool configs",
+    "CI/workflow definitions",
+    "editor-only settings (.editorconfig, .vscode/settings.json)",
+  ],
+};
+
+function isTransactionalOnlyPath(file: string): boolean {
+  const normalized = file.replaceAll("\\", "/");
+  return (
+    LOCKFILE.test(normalized) ||
+    TOOL_CONFIG.test(normalized) ||
+    EDITOR_SETTINGS.test(normalized)
+  );
+}
+
+function classifyMessageTransactional(
+  subject: string,
+  body: string,
+): Omit<SkippedGitCommit, "treeHash" | "contentHash" | "files" | "commit"> | null {
+  if (BUSINESS_SUBJECT.test(subject)) return null;
+  const text = `${subject}\n${body}`.toLowerCase();
+  const rules: Array<{
+    test: (value: string) => boolean;
+    reasonCode: SkippedGitCommit["reasonCode"];
+    reason: string;
+  }> = [
+    {
+      test: (value) => /^chore(\(|:|\s)/.test(subject) || /^build(\(|:|\s)/.test(subject),
+      reasonCode: "message-transactional",
+      reason: "提交信息符合 Conventional chore/build 前缀，且无业务 feat/fix 信号",
+    },
+    {
+      test: (value) =>
+        /\bdependabot\b/.test(value) ||
+        /\bbump\b/.test(value) ||
+        /\bupgrade\b.*\bdeps?\b/.test(value) ||
+        /\bupdate\b.*\block\b/.test(value),
+      reasonCode: "message-transactional",
+      reason: "提交信息表明依赖/锁文件意图",
+    },
+    {
+      test: (value) =>
+        /^ci(\(|:|\s)/.test(subject) ||
+        /\bworkflow\b/.test(value) ||
+        /\bgithub actions\b/.test(value),
+      reasonCode: "message-transactional",
+      reason: "提交信息表明 CI/workflow 事务",
+    },
+    {
+      test: () => /^merge branch/i.test(subject),
+      reasonCode: "merge-noise",
+      reason: "合并分支提交且无业务 feat/fix 信号",
+    },
+    {
+      test: () => /^revert/i.test(subject),
+      reasonCode: "revert-noise",
+      reason: "回滚提交且无业务 feat/fix 信号",
+    },
+  ];
+  for (const rule of rules) {
+    if (rule.test(text) || rule.test(subject.toLowerCase())) {
+      return {
+        subject,
+        reasonCode: rule.reasonCode,
+        reason: rule.reason,
+      };
+    }
+  }
+  return null;
+}
+
+function rankBusinessFile(change: GitFileChange): number {
+  const file = change.path.replaceAll("\\", "/");
+  if (generatedDocumentationPath(file)) return 40;
+  if (TEST_SOURCE.test(file)) return 20;
+  if (isTransactionalOnlyPath(file)) return 90;
+  if (DEPENDENCY_MANIFEST.test(file)) return 60;
+  return 0;
+}
+
+function selectBusinessFileChanges(
+  commit: string,
+  changes: GitFileChange[],
+  maxFiles: number,
+): { kept: GitFileChange[]; skipped: SkippedGitFileWithinCommit[] } {
+  const ranked = [...changes].sort(
+    (left, right) =>
+      rankBusinessFile(left) - rankBusinessFile(right) ||
+      left.path.localeCompare(right.path),
+  );
+  const kept = ranked.slice(0, maxFiles);
+  const skipped = ranked.slice(maxFiles).map((change) => ({
+    commit,
+    path: change.path,
+    reasonCode: "per-commit-file-cap" as const,
+    reason: `单 commit 业务文件上限为 ${maxFiles}，该路径未纳入分片`,
+  }));
+  return { kept, skipped };
+}
+
+interface GitCommitMeta {
+  commit: string;
+  subject: string;
+  body: string;
+  authoredEpoch: string;
+}
+
+async function listRecentGitCommits(repo: string, limit: number): Promise<GitCommitMeta[]> {
+  const output = await git(repo, [
+    "log",
+    `-${limit}`,
+    "--format=%H%x1f%s%x1f%b%x1f%at%x00",
+    "--",
+    ".",
+    `:(exclude)${OUTPUT_ROOT}/**`,
+    ...STANDARD_DOC_OUTPUTS.map((entry) =>
+      `:(exclude)${entry.endsWith("/") ? `${entry}**` : entry}`),
+  ]);
+  return output
+    .split("\0")
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .map((record) => {
+      const [commit = "", subject = "", body = "", authoredEpoch = ""] = record.split("\x1f");
+      return { commit, subject, body, authoredEpoch };
+    });
+}
 
 async function classifyTransactionalCommit(
   repo: string,
   commit: string,
   firstParent: string | undefined,
   subject: string,
+  body: string,
   changes: GitFileChange[],
 ): Promise<Omit<SkippedGitCommit, "treeHash" | "contentHash" | "subject" | "files"> | null> {
+  const messageSkip = classifyMessageTransactional(subject, body);
+  if (messageSkip) {
+    return {
+      commit,
+      reasonCode: messageSkip.reasonCode,
+      reason: messageSkip.reason,
+    };
+  }
   const files = changes.flatMap((change) => [change.oldPath, change.path].filter(Boolean)) as string[];
   if (files.length === 0) return null;
+  if (files.length === 1 && DEPENDENCY_MANIFEST.test(files[0]!)) {
+    return {
+      commit,
+      reasonCode: "dependency-lockfile-only",
+      reason: "仅变更 package 清单，未包含其它业务文件",
+    };
+  }
+  const businessPaths = files.filter((file) => !isTransactionalOnlyPath(file));
+  if (businessPaths.length === 0) {
+    return {
+      commit,
+      reasonCode: "transactional-paths-only",
+      reason: "变更文件全部落在事务路径集合内，不包含业务源码或业务文档",
+    };
+  }
   if (files.every((file) => LOCKFILE.test(file))) {
     return {
       commit,
@@ -461,62 +631,84 @@ async function scanFileSet(
   );
 }
 
+async function loadCommitFileChanges(
+  repo: string,
+  commit: string,
+): Promise<{ firstParent?: string; changes: GitFileChange[] }> {
+  const ancestry = (await git(repo, ["rev-list", "--parents", "-n", "1", commit])).split(" ");
+  const firstParent = ancestry[1];
+  const nameStatus = firstParent
+    ? await git(repo, [
+        "diff",
+        "--name-status",
+        "-z",
+        "--find-renames",
+        firstParent,
+        commit,
+        "--",
+      ])
+    : await git(repo, [
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        "-z",
+        "--find-renames",
+        commit,
+      ]);
+  const changes = parseGitNameStatus(nameStatus).filter(
+    (change) =>
+      !generatedDocumentationPath(change.path) ||
+      (change.oldPath !== undefined && !generatedDocumentationPath(change.oldPath)),
+  );
+  return {
+    ...(firstParent ? { firstParent } : {}),
+    changes,
+  };
+}
+
+export interface GitScanStats {
+  scannedCommits: number;
+  effectiveCommits: number;
+  skippedCommits: number;
+  maxEffectiveCommits: number;
+}
+
 async function scanGitSet(
   repo: string,
   source: SourceSet,
-): Promise<{ records: ScanRecord[]; skippedGitCommits: SkippedGitCommit[] }> {
-  const maxCommits = source.maxCommits ?? 20;
-  const output = await git(repo, [
-    "log",
-    `-${maxCommits}`,
-    "--format=%H%x1f%s%x1f%b%x1f%at%x00",
-    "--",
-    ".",
-    `:(exclude)${OUTPUT_ROOT}/**`,
-    ...STANDARD_DOC_OUTPUTS.map((entry) =>
-      `:(exclude)${entry.endsWith("/") ? `${entry}**` : entry}`),
-  ]);
-  const commits = output
-    .split("\0")
-    .map((record) => record.trim())
-    .filter(Boolean);
+): Promise<{
+  records: ScanRecord[];
+  skippedGitCommits: SkippedGitCommit[];
+  skippedFilesWithinCommit: SkippedGitFileWithinCommit[];
+  gitScanStats: GitScanStats;
+}> {
+  const maxEffective = source.maxCommits ?? DEFAULT_MAX_EFFECTIVE_COMMITS;
+  const maxFilesPerCommit =
+    source.maxBusinessFilesPerCommit ?? DEFAULT_MAX_BUSINESS_FILES_PER_COMMIT;
+  const candidates = await listRecentGitCommits(repo, GIT_SCAN_LOG_LIMIT);
   const records: ScanRecord[] = [];
   const skippedGitCommits: SkippedGitCommit[] = [];
-  for (const record of commits) {
-    const [commit = "", subject = "", body = "", authoredEpoch = ""] = record.split("\x1f");
-    const ancestry = (await git(repo, ["rev-list", "--parents", "-n", "1", commit])).split(" ");
-    const firstParent = ancestry[1];
-    const nameStatus = firstParent
-      ? await git(repo, [
-          "diff",
-          "--name-status",
-          "-z",
-          "--find-renames",
-          firstParent,
-          commit,
-          "--",
-        ])
-      : await git(repo, [
-          "diff-tree",
-          "--root",
-          "--no-commit-id",
-          "--name-status",
-          "-r",
-          "-z",
-          "--find-renames",
-          commit,
-        ]);
-    const changes = parseGitNameStatus(nameStatus).filter(
-      (change) =>
-        !generatedDocumentationPath(change.path) ||
-        (change.oldPath !== undefined && !generatedDocumentationPath(change.oldPath)),
-    );
+  const skippedFilesWithinCommit: SkippedGitFileWithinCommit[] = [];
+  const effectiveCommits: Array<{
+    meta: GitCommitMeta;
+    firstParent?: string;
+    changes: GitFileChange[];
+  }> = [];
+  let scannedCommits = 0;
+  for (const meta of candidates) {
+    scannedCommits += 1;
+    if (effectiveCommits.length >= maxEffective) break;
+    const { commit, subject, body } = meta;
+    const { firstParent, changes } = await loadCommitFileChanges(repo, commit);
     if (!source.includeTransactionalCommits) {
       const classification = await classifyTransactionalCommit(
         repo,
         commit,
         firstParent,
         subject,
+        body,
         changes,
       );
       if (classification) {
@@ -543,7 +735,23 @@ async function scanGitSet(
         continue;
       }
     }
-    for (const change of changes) {
+    effectiveCommits.push({
+      meta,
+      ...(firstParent ? { firstParent } : {}),
+      changes,
+    });
+  }
+  const gitScanStats: GitScanStats = {
+    scannedCommits,
+    effectiveCommits: effectiveCommits.length,
+    skippedCommits: skippedGitCommits.length,
+    maxEffectiveCommits: maxEffective,
+  };
+  for (const { meta, firstParent, changes } of effectiveCommits) {
+    const { commit, subject, body, authoredEpoch } = meta;
+    const { kept, skipped } = selectBusinessFileChanges(commit, changes, maxFilesPerCommit);
+    skippedFilesWithinCommit.push(...skipped);
+    for (const change of kept) {
       if (
         redactSensitive(change.path) !== change.path ||
         (change.oldPath !== undefined && redactSensitive(change.oldPath) !== change.oldPath)
@@ -610,13 +818,19 @@ async function scanGitSet(
         : "";
     throw new Error(`Git 历史来源为空${detail}`);
   }
-  return { records, skippedGitCommits };
+  return { records, skippedGitCommits, skippedFilesWithinCommit, gitScanStats };
 }
 
 async function scanDetailed(
   repo: string,
   config: RunConfig,
-): Promise<{ records: ScanRecord[]; skippedGitCommits: SkippedGitCommit[] }> {
+): Promise<{
+  records: ScanRecord[];
+  skippedGitCommits: SkippedGitCommit[];
+  skippedFilesWithinCommit: SkippedGitFileWithinCommit[];
+  gitScanStats?: GitScanStats;
+  gitScanPolicy?: GitScanPolicy;
+}> {
   const excludes = [
     `${OUTPUT_ROOT}/**`,
     ...STANDARD_DOC_OUTPUTS.filter((entry) => entry.endsWith("/")).map((entry) => `${entry}**`),
@@ -628,10 +842,19 @@ async function scanDetailed(
   const groups = await Promise.all(
     config.sourceSets.map((source) =>
       source.type === "git"
-        ? scanGitSet(repo, source)
+        ? scanGitSet(repo, source).then((value) => ({
+            ...value,
+            gitScanPolicy: {
+              ...GIT_SCAN_POLICY,
+              maxEffectiveCommits: source.maxCommits ?? DEFAULT_MAX_EFFECTIVE_COMMITS,
+              maxBusinessFilesPerCommit:
+                source.maxBusinessFilesPerCommit ?? DEFAULT_MAX_BUSINESS_FILES_PER_COMMIT,
+            },
+          }))
         : scanFileSet(repo, source, excludes).then((records) => ({
             records,
             skippedGitCommits: [],
+            skippedFilesWithinCommit: [],
           })),
     ),
   );
@@ -641,11 +864,29 @@ async function scanDetailed(
   const skippedGitCommits = groups
     .flatMap((group) => group.skippedGitCommits)
     .sort((left, right) => left.commit.localeCompare(right.commit));
+  const skippedFilesWithinCommit = groups
+    .flatMap((group) => group.skippedFilesWithinCommit)
+    .sort(
+      (left, right) =>
+        left.commit.localeCompare(right.commit) || left.path.localeCompare(right.path),
+    );
+  const gitGroup = groups.find(
+    (group): group is (typeof groups)[number] & {
+      gitScanStats: GitScanStats;
+      gitScanPolicy: GitScanPolicy;
+    } => "gitScanStats" in group && group.gitScanStats !== undefined,
+  );
   const nonEmptyTypes = new Set(records.map((record) => record.sourceType));
   if (nonEmptyTypes.size < 2) {
     throw new Error("V2 要求至少两类真实且非空的来源");
   }
-  return { records, skippedGitCommits };
+  return {
+    records,
+    skippedGitCommits,
+    skippedFilesWithinCommit,
+    ...(gitGroup?.gitScanStats ? { gitScanStats: gitGroup.gitScanStats } : {}),
+    ...(gitGroup?.gitScanPolicy ? { gitScanPolicy: gitGroup.gitScanPolicy } : {}),
+  };
 }
 
 export async function scan(repo: string, config: RunConfig): Promise<ScanRecord[]> {
@@ -1278,6 +1519,9 @@ export async function inspectPipeline(repoInput: string, configPath: string) {
     records: scanned.records,
     assets: prepare(scanned.records, previous),
     skippedGitCommits: scanned.skippedGitCommits,
+    skippedFilesWithinCommit: scanned.skippedFilesWithinCommit,
+    gitScanStats: scanned.gitScanStats,
+    gitScanPolicy: scanned.gitScanPolicy,
   };
 }
 
@@ -1289,13 +1533,25 @@ export async function prepareShardPipeline(
 ) {
   const config = await loadConfig(configPath);
   const inspected = await inspectPipeline(repoInput, configPath);
-  return prepareShards(inspected.records, inspected.assets, output, {
+  const prepared = await prepareShards(inspected.records, inspected.assets, output, {
     ...options,
+    ...(!options.resume && options.maxChars === undefined
+      ? { maxChars: DEFAULT_MAX_CHARS }
+      : {}),
+    ...(!options.resume && options.maxItems === undefined
+      ? { maxItems: DEFAULT_MAX_ITEMS }
+      : {}),
     ...(!options.resume && options.maxShards === undefined
       ? { maxShards: config.maxShards ?? 10 }
       : {}),
     skippedGitCommits: inspected.skippedGitCommits,
+    skippedFilesWithinCommit: inspected.skippedFilesWithinCommit,
+    ...(inspected.gitScanPolicy ? { gitScanPolicy: inspected.gitScanPolicy } : {}),
+    ...(options.omittedRequirementSources !== undefined
+      ? { omittedRequirementSources: options.omittedRequirementSources }
+      : {}),
   });
+  return { ...prepared, gitScanStats: inspected.gitScanStats };
 }
 
 export async function verifySecondRun(repoInput: string, configPath: string) {

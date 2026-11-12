@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import fg from "fast-glob";
@@ -13,14 +13,18 @@ import {
 } from "./acceptance.js";
 import {
   currentBranch,
+  DEFAULT_MAX_EFFECTIVE_COMMITS,
+  DEFAULT_MAX_CHARS,
+  DEFAULT_MAX_ITEMS,
   git,
+  type GitScanStats,
   loadConfig,
   prepareShardPipeline,
   runPipeline,
   verifySecondRun,
 } from "./pipeline.js";
 import { validateShardedInput } from "./shards.js";
-import type { RunConfig } from "./types.js";
+import type { OmittedRequirementSource, RunConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 const COMMON_REQUIREMENT_GLOBS = [
@@ -113,10 +117,79 @@ interface WorkflowSession {
   mode: "editor-assisted" | "provider-automatic";
 }
 
+const REQUIREMENT_GLOB_PRIORITY: Array<{ glob: string; priority: number }> = [
+  { glob: "docs/requirements/**/*.md", priority: 1 },
+  { glob: "docs/product/**/*.md", priority: 2 },
+  { glob: "requirements/**/*.md", priority: 3 },
+  { glob: "specs/**/*.md", priority: 4 },
+  { glob: "spec/**/*.md", priority: 5 },
+];
+
+async function pickSingleRequirement(
+  repo: string,
+): Promise<{ selected: string; omitted: OmittedRequirementSource[] }> {
+  const refactorPath = "spec/refactor.md";
+  if (await exists(path.join(repo, refactorPath))) {
+    const all = await fg(COMMON_REQUIREMENT_GLOBS, {
+      cwd: repo,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      ignore: ["docs/可读化/**", "node_modules/**", "dist/**", "build/**"],
+    });
+    const unique = [...new Set(all)].sort();
+    return {
+      selected: refactorPath,
+      omitted: unique
+        .filter((file) => file !== refactorPath)
+        .map((file) => ({
+          path: file,
+          reason: "闯关默认仅纳入 1 份 requirement；优先级 spec/refactor.md",
+        })),
+    };
+  }
+  const candidates: Array<{ path: string; priority: number; mtimeMs: number }> = [];
+  for (const { glob, priority } of REQUIREMENT_GLOB_PRIORITY) {
+    const matches = await fg(glob, {
+      cwd: repo,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      ignore: ["docs/可读化/**", "node_modules/**", "dist/**", "build/**"],
+    });
+    for (const file of matches) {
+      const fileStat = await stat(path.join(repo, file));
+      candidates.push({ path: file, priority, mtimeMs: fileStat.mtimeMs });
+    }
+  }
+  const deduped = new Map<string, { path: string; priority: number; mtimeMs: number }>();
+  for (const candidate of candidates) {
+    const existing = deduped.get(candidate.path);
+    if (!existing || candidate.priority < existing.priority) {
+      deduped.set(candidate.path, candidate);
+    }
+  }
+  const sorted = [...deduped.values()].sort(
+    (left, right) =>
+      left.priority - right.priority ||
+      right.mtimeMs - left.mtimeMs ||
+      left.path.localeCompare(right.path),
+  );
+  if (sorted.length === 0) {
+    throw new Error("未发现可纳入的 requirement 文件");
+  }
+  const selected = sorted[0]!.path;
+  return {
+    selected,
+    omitted: sorted.slice(1).map((candidate) => ({
+      path: candidate.path,
+      reason: "闯关默认仅纳入 1 份 requirement",
+    })),
+  };
+}
+
 async function discoverConfig(
   repo: string,
   options: StartWorkflowOptions,
-): Promise<RunConfig> {
+): Promise<{ config: RunConfig; omittedRequirementSources: OmittedRequirementSource[] }> {
   const explicitRequirements = Boolean(options.requirements?.length);
   const requested = options.requirements?.length
     ? options.requirements
@@ -150,30 +223,62 @@ async function discoverConfig(
   }
   if (!options.requirements?.length && found.length > 1 && !options.yes) {
     throw new Error(
-      `发现多个需求目录：${found.join("、")}。使用 --yes 全部采用，或 --requirements <glob> 明确选择`,
+      `发现多个需求目录：${found.join("、")}。使用 --yes 自动纳入单份 requirement，或 --requirements <glob> 明确选择`,
     );
   }
+  let requirementInclude = found;
+  let omittedRequirementSources: OmittedRequirementSource[] = [];
+  if (!explicitRequirements && options.yes) {
+    const single = await pickSingleRequirement(repo);
+    requirementInclude = [single.selected];
+    omittedRequirementSources = single.omitted;
+  }
   return {
-    outputRoot: "docs/可读化",
-    baseBranch: options.baseBranch ?? (await detectBaseBranch(repo)),
-    maxShards: options.maxShards ?? 10,
-    sourceSets: [
-      { type: "requirement", include: found },
-      {
-        type: "git",
-        maxCommits: options.maxCommits ?? 20,
-        includeTransactionalCommits: options.includeTransactionalCommits ?? false,
-      },
-    ],
-    exclude: ["node_modules/**", "dist/**", "build/**", "coverage/**"],
+    config: {
+      outputRoot: "docs/可读化",
+      baseBranch: options.baseBranch ?? (await detectBaseBranch(repo)),
+      maxShards: options.maxShards ?? 10,
+      sourceSets: [
+        { type: "requirement", include: requirementInclude },
+        {
+          type: "git",
+          maxCommits: options.maxCommits ?? DEFAULT_MAX_EFFECTIVE_COMMITS,
+          includeTransactionalCommits: options.includeTransactionalCommits ?? false,
+        },
+      ],
+      exclude: ["node_modules/**", "dist/**", "build/**", "coverage/**"],
+    },
+    omittedRequirementSources,
   };
 }
 
-function taskText(session: WorkflowSession): string {
+interface TaskScaleSummary {
+  effectiveGitCommits: number;
+  skippedGitCommits: number;
+  scannedGitCommits: number;
+  totalShards: number;
+  maxChars: number;
+  maxItems: number;
+}
+
+function taskText(session: WorkflowSession, summary: TaskScaleSummary): string {
   return `# AI 小上下文逐片任务
 
 这是 editor-assisted 工作流。CLI 不含模型 API；你必须逐片完成语义分析，不能把
 \`start\` 生成基线误报为分析完成。
+
+## 本轮规模摘要
+
+- 扫描 Git 提交：${summary.scannedGitCommits}
+- 有效 Git 提交：${summary.effectiveGitCommits}（跳过的事务提交不占名额）
+- 跳过 Git 提交：${summary.skippedGitCommits}
+- 总分片：${summary.totalShards}
+- 单片字符预算：${summary.maxChars}
+- 单片资产上限：${summary.maxItems}
+
+Git 来源已由 \`start\` 在 CLI 阶段完成事务过滤；片内每条记录均可提炼。不要扫描
+全仓历史，不要自行再过滤 chore/依赖/eslint 类提交。
+\`skippedGitCommits\` 与 manifest 中的跳过项仅用于 R1/R6 报告引用，勿对跳过项补写资产。
 
 ## 本轮唯一输入边界
 
@@ -195,21 +300,14 @@ function taskText(session: WorkflowSession): string {
 
 ## Git 来源窗口
 
-Git 来源默认仅最近 **20** 次提交（\`maxCommits=20\`），不是全仓历史。不得暗示、
-假设或声称已审阅全部提交；窗口外内容只能写入 gap。
-
-## 资产提炼范围
-
-处理 shard 时只提炼 **业务规则、架构决策、接口契约、数据模型、可复用代码模式**。
-不得为 eslint/webpack/babel/tsconfig/prettier/lockfile、纯依赖升级、CI/format-only、
-editorconfig 等事务性产物单独造“业务资产”。
+Git 来源默认仅最近 **${DEFAULT_MAX_EFFECTIVE_COMMITS} 次有效提交**（\`maxCommits\` 指
+有效数，跳过的不占名额），不是全仓历史。不得暗示、假设或声称已审阅全部提交；窗口外
+内容只能写入 gap。
 
 ## 事务性提交边界
 
-manifest/source manifest 中的 \`skippedGitCommits\` 仅是 R1/R6 可追溯证据，不是
-待分析资产。不得为被跳过的依赖/锁文件、工具/构建/CI 配置或纯格式化提交补造资产；
-如确需纳入，停止当前 workspace，并要求用户以
-\`--include-transactional-commits\` 新建 workspace 重跑。
+\`skippedGitCommits\` 仅是 R1/R6 可追溯证据，不是待分析资产。如确需把被跳过提交纳入，
+停止当前 workspace，并要求用户以 \`--include-transactional-commits\` 新建 workspace 重跑。
 
 ## 唯一输出与 schema
 
@@ -280,6 +378,7 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
       })
     : null;
   let config: RunConfig;
+  let omittedRequirementSources: OmittedRequirementSource[] = [];
   let previousSession: WorkflowSession | null = null;
   if (existingManifest) {
     previousSession = JSON.parse(
@@ -301,9 +400,13 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     }
     config = await loadConfig(configPath);
   } else {
-    config = options.config
-      ? await loadConfig(options.config)
-      : await discoverConfig(repo, options);
+    if (options.config) {
+      config = await loadConfig(options.config);
+    } else {
+      const discovered = await discoverConfig(repo, options);
+      config = discovered.config;
+      omittedRequirementSources = discovered.omittedRequirementSources;
+    }
     const transactionalOverride = options.includeTransactionalCommits;
     const maxCommitsOverride = options.maxCommits;
     config = {
@@ -325,11 +428,21 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
   }
   if (existingManifest) await assertIndependentBranch(repo, config);
   const prepared = await prepareShardPipeline(repo, configPath, shards, {
-    ...(options.maxChars !== undefined ? { maxChars: options.maxChars } : {}),
-    ...(options.maxItems !== undefined ? { maxItems: options.maxItems } : {}),
+    ...(options.maxChars !== undefined
+      ? { maxChars: options.maxChars }
+      : existingManifest
+        ? {}
+        : { maxChars: DEFAULT_MAX_CHARS }),
+    ...(options.maxItems !== undefined
+      ? { maxItems: options.maxItems }
+      : existingManifest
+        ? {}
+        : { maxItems: DEFAULT_MAX_ITEMS }),
     ...(options.maxShards !== undefined ? { maxShards: options.maxShards } : {}),
+    ...(omittedRequirementSources.length > 0 ? { omittedRequirementSources } : {}),
     resume: existingManifest !== null,
   });
+  const gitScanStats = prepared.gitScanStats;
   const session: WorkflowSession = {
     schemaVersion: 2,
     repo,
@@ -356,7 +469,18 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
       ),
     );
   }
-  await writeText(task, taskText(session));
+  const manifest = JSON.parse(await readFile(path.join(shards, "manifest.json"), "utf8")) as {
+    shards: unknown[];
+  };
+  const scaleSummary: TaskScaleSummary = {
+    effectiveGitCommits: gitScanStats?.effectiveCommits ?? 0,
+    skippedGitCommits: gitScanStats?.skippedCommits ?? 0,
+    scannedGitCommits: gitScanStats?.scannedCommits ?? 0,
+    totalShards: manifest.shards.length,
+    maxChars: prepared.maxChars,
+    maxItems: prepared.maxItems,
+  };
+  await writeText(task, taskText(session, scaleSummary));
   await writeText(path.join(workspace, "session.json"), JSON.stringify(session, null, 2));
 
   let providerValidation:
@@ -381,6 +505,7 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     effectiveConfig: configPath,
     task,
     retrospective,
+    gitScanSummary: scaleSummary,
     ...prepared,
     ...(providerValidation
       ? {

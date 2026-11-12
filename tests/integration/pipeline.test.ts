@@ -234,7 +234,7 @@ describe("incremental pipeline", () => {
     const runRecord = await readFile(path.join(repo, runPath!), "utf8");
     expect(sourceManifest).toContain("skippedGitCommits:");
     expect(sourceManifest).toContain(dependencyCommit);
-    expect(sourceManifest).toContain("dependency-lockfile-only");
+    expect(sourceManifest).toMatch(/dependency-lockfile-only|message-transactional/);
     expect(runRecord).toContain("跳过事务性 Git 提交：4");
     expect(runRecord).toContain(formatCommit);
 
@@ -359,6 +359,83 @@ sourceSets:
     const result = await runPipeline(repo, config, nextAssets);
     expect(result.conflicts.some((conflict) => conflict.assetId === target!.assetId)).toBe(true);
     expect(await readFile(generated, "utf8")).toContain("Manual edit");
+  });
+
+  it("caps effective git commits at 10 and skips transactional commits without consuming slots", async () => {
+    const repo = await createRepository();
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    for (let index = 0; index < 14; index += 1) {
+      await writeFile(
+        path.join(repo, `src/feature-${index}.ts`),
+        `export const feature${index} = ${index};\n`,
+        "utf8",
+      );
+      await git(repo, ["add", `src/feature-${index}.ts`]);
+      await git(repo, ["commit", "-m", `feat: add feature ${index}`]);
+    }
+    for (const message of [
+      "chore(deps): refresh lockfile",
+      "chore: configure eslint",
+      "ci: update workflow",
+    ]) {
+      if (message.includes("lockfile")) {
+        await writeFile(path.join(repo, "package-lock.json"), '{"lockfileVersion":3}\n', "utf8");
+        await git(repo, ["add", "package-lock.json"]);
+      } else if (message.includes("eslint")) {
+        await writeFile(path.join(repo, "eslint.config.js"), "export default [];\n", "utf8");
+        await git(repo, ["add", "eslint.config.js"]);
+      } else {
+        await mkdir(path.join(repo, ".github/workflows"), { recursive: true });
+        await writeFile(
+          path.join(repo, ".github/workflows/ci.yml"),
+          "name: ci\n",
+          "utf8",
+        );
+        await git(repo, ["add", ".github/workflows/ci.yml"]);
+      }
+      await git(repo, ["commit", "-m", message]);
+    }
+
+    const configPath = path.join(repo, "run.yaml");
+    const inspected = await inspectPipeline(repo, configPath);
+    const effectiveRevisions = new Set(
+      inspected.records
+        .filter((record) => record.sourceType === "git")
+        .map((record) => record.sourceRevision),
+    );
+    expect(effectiveRevisions.size).toBeLessThanOrEqual(10);
+    expect(inspected.gitScanStats?.effectiveCommits).toBeLessThanOrEqual(10);
+    expect(inspected.skippedGitCommits.length).toBeGreaterThanOrEqual(3);
+    expect(
+      inspected.skippedGitCommits.some((entry) => entry.reasonCode === "message-transactional"),
+    ).toBe(true);
+
+    const work = path.join(path.dirname(repo), `${path.basename(repo)}-effective-cap`);
+    temporary.push(work);
+    const prepared = await prepareShards(inspected.records, inspected.assets, work, {
+      maxChars: 6_000,
+      maxItems: 2,
+      maxShards: 10,
+      skippedGitCommits: inspected.skippedGitCommits,
+      ...(inspected.gitScanPolicy ? { gitScanPolicy: inspected.gitScanPolicy } : {}),
+    });
+    const manifest = JSON.parse(await readFile(path.join(work, "manifest.json"), "utf8")) as {
+      maxChars: number;
+      gitScanPolicy: { maxEffectiveCommits: number };
+      shards: Array<{ path: string }>;
+    };
+    expect(manifest.maxChars).toBe(6_000);
+    expect(manifest.gitScanPolicy.maxEffectiveCommits).toBe(10);
+    for (const entry of manifest.shards) {
+      const shard = JSON.parse(
+        await readFile(path.join(work, entry.path), "utf8"),
+      ) as AssetShard;
+      const excerptChars = shard.items.reduce(
+        (sum, item) => sum + item.sourceExcerpt.excerptChars,
+        0,
+      );
+      expect(excerptChars).toBeLessThanOrEqual(6_000);
+    }
   });
 
   it("protects manually edited managed index output", async () => {

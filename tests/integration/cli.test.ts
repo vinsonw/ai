@@ -50,7 +50,7 @@ describe("中文 CLI", () => {
     expect(result.stdout).toContain("--max-shards");
     expect(result.stdout).toContain("默认 10");
     expect(result.stdout).toContain("--max-commits");
-    expect(result.stdout).toContain("默认 20");
+    expect(result.stdout).toContain("默认 10");
     expect(result.stdout).toContain("--include-transactional-commits");
   });
 });

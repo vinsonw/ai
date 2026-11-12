@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     .name("asset-compound")
     .description("生成标准 docs 分类目录和可增量、可追溯的验收资产")
     .usage("[选项] <命令>")
-    .version("0.1.8", "-V, --version", "显示版本")
+    .version("0.1.9", "-V, --version", "显示版本")
     .helpOption("-h, --help", "显示帮助")
     .addHelpCommand("help [command]", "显示指定命令的帮助")
     .showHelpAfterError("（使用 --help 查看帮助）")
@@ -127,12 +127,12 @@ async function main(): Promise<void> {
     .option("--config <path>", "高级覆盖：使用既有 run.yaml")
     .option("--requirements <globs...>", "需求来源 glob；自动发现歧义时用于最小选择")
     .option("--base-branch <name>", "覆盖自动发现的基线分支")
-    .option("--max-chars <number>", "每片来源摘录字符预算；首次默认 12000", parseBudget)
-    .option("--max-items <number>", "每片最多资产数；默认按 maxShards 自动平衡", parseBudget)
+    .option("--max-chars <number>", "每片来源摘录字符预算；首次默认 6000", parseBudget)
+    .option("--max-items <number>", "每片最多资产数；首次默认 2", parseBudget)
     .option("--max-shards <number>", "总分片数上限；首次默认 10", parseBudget)
     .option(
       "--max-commits <number>",
-      "Git 来源最近提交数；首次默认 20（非全历史）",
+      "Git 有效提交数上限；跳过的不占名额；首次默认 10",
       parseBudget,
     )
     .option(
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
       "保留 dependency/lockfile、eslint/webpack/babel/tsconfig 等纯工具/CI/格式化事务提交",
     )
     .option("--provider <executable>", "可选外部 provider 适配器；凭证仅从环境变量读取")
-    .option("--yes", "接受无歧义默认值，或接受全部自动发现的需求目录")
+    .option("--yes", "接受无歧义默认值；自动发现时默认只纳入 1 份 requirement")
     .action(
       async (options: {
         workspace?: string;
@@ -195,8 +195,8 @@ async function main(): Promise<void> {
       .command("prepare")
       .description("生成小上下文 manifest 与待分析分片，不写入目标仓库")
       .option("--output <directory>", "分片工作目录；默认必须显式指定")
-      .option("--max-chars <number>", "每片来源摘录字符预算", parseBudget, 12_000)
-      .option("--max-items <number>", "每片最多资产数；默认自动平衡", parseBudget)
+      .option("--max-chars <number>", "每片来源摘录字符预算", parseBudget, 6_000)
+      .option("--max-items <number>", "每片最多资产数；默认 2", parseBudget, 2)
       .option("--max-shards <number>", "总分片数上限；默认读取 config 或使用 10", parseBudget)
       .option("--resume", "续跑同一 manifest，仅列出未完成分片")
       .option("--legacy-stdout", "兼容旧流程：向 stdout 输出单一 JSON 数组"),
