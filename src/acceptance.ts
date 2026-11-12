@@ -86,6 +86,8 @@ interface AcceptanceOptions {
   delivery: PipelineResult;
   /** deliver 信任已完成分片时，文件型来源允许 manifest 中的 untracked / contentHash 溯源 */
   trustDelivered?: boolean;
+  /** deliver 仅聚合写盘，跳过验收 QA 门禁（质量在 validate） */
+  fromDeliver?: boolean;
   verification: {
     secondRunZeroDiff: boolean;
     counts: {
@@ -158,6 +160,30 @@ function safeRemote(raw: string): string {
   remote.search = "";
   remote.hash = "";
   return remote.toString().replace(/\/$/, "");
+}
+
+export async function detectAcceptanceMetadataForDeliver(
+  repo: string,
+  startedAt: string,
+): Promise<AcceptanceMetadata> {
+  try {
+    return await detectAcceptanceMetadata(repo, startedAt);
+  } catch {
+    const branch = (await currentBranch(repo).catch(() => "")) || "（未知）";
+    const head = (await git(repo, ["rev-parse", "HEAD"]).catch(() => "")) || "（未知）";
+    const project = path.basename(repo);
+    return {
+      developmentGroup: "（deliver 信任聚合；元数据未在 deliver 重验）",
+      practitioner: "（见 Git user.name 或分片会话）",
+      project,
+      repository: repo,
+      branch,
+      head,
+      startedAt,
+      trigger: "asset-compound start --yes → asset-compound deliver --yes",
+      toolWorkflow: "@vinsonw2/asset-compound deliver 信任聚合（QA 仅在 validate）",
+    };
+  }
 }
 
 export async function detectAcceptanceMetadata(
@@ -283,6 +309,17 @@ ${rows}
 `;
 }
 
+function trustDeliverNotice(options: AcceptanceOptions): string {
+  return `## deliver 信任聚合模式
+
+本产物由 \`deliver --yes\` **仅聚合写盘**；实质质量、复盘占位、来源 revision、
+防重复验证、文档结构与内部链接等门禁均在 \`validate\` 完成。deliver 不再重复 QA。
+
+- 信任分片：是（\`trustDelivered=${Boolean(options.trustDelivered)}\`）
+- 写盘模式：\`fromDeliver=${Boolean(options.fromDeliver)}\`
+`;
+}
+
 function renderReport(options: AcceptanceOptions, finishedAt: string): string {
   const sourceTypes = [...new Set(options.delivery.assets.map((asset) => asset.sourceType))];
   const sourceSummary = sourceTypes.map((type) => SOURCE_LABELS[type]).join("、");
@@ -381,7 +418,8 @@ ${writebackRows}
 - 最不顺 / 耗时：${markdownCell(options.retrospective.frictionAndTime)}
 - 覆盖缺口：${markdownCell(options.retrospective.coverageGaps)}
 - 改进：${markdownCell(options.retrospective.improvements)}
-`;
+
+${options.fromDeliver || options.trustDelivered ? trustDeliverNotice(options) : ""}`;
 }
 
 function assertReport(report: string, assets: AssetRecord[]): void {
@@ -488,26 +526,34 @@ export function assertRetrospectiveInput(retrospective: RetrospectiveInput): voi
 }
 
 export async function writeAcceptancePackage(options: AcceptanceOptions) {
-  if (options.delivery.conflicts.length > 0 || options.delivery.counts.conflicts > 0) {
-    throw new Error("存在冲突，拒绝生成看似成功的 2.2 验收报告");
-  }
-  if (!options.verification.secondRunZeroDiff || options.verification.counts.new !== 0 || options.verification.counts.updated !== 0) {
-    throw new Error("防重复验证未通过，拒绝生成验收交付");
+  const deliverTrust = Boolean(options.fromDeliver || options.trustDelivered);
+  if (!deliverTrust) {
+    if (options.delivery.conflicts.length > 0 || options.delivery.counts.conflicts > 0) {
+      throw new Error("存在冲突，拒绝生成看似成功的 2.2 验收报告");
+    }
+    if (
+      !options.verification.secondRunZeroDiff ||
+      options.verification.counts.new !== 0 ||
+      options.verification.counts.updated !== 0
+    ) {
+      throw new Error("防重复验证未通过，拒绝生成验收交付");
+    }
   }
   if (await exists(path.join(options.repo, "NOT-ACCEPTANCE-DATA.md"))) {
     throw new Error("仓库明确标记为非验收 fixture，不能生成正式验收结论");
   }
   const sourceTypes = new Set(options.delivery.assets.map((asset) => asset.sourceType));
-  if (sourceTypes.size < 2) throw new Error("2.1 提取源清单必须包含至少两种真实数据源");
-  if (options.delivery.assets.length === 0) throw new Error("没有可验收资产");
-  for (const asset of options.delivery.assets) {
-    assertAssetSourceRevision(
-      asset,
-      options.trustDelivered ? { trustDelivered: true } : undefined,
-    );
-    assertSubstantiveAsset(asset);
+  if (!deliverTrust && sourceTypes.size < 2) {
+    throw new Error("2.1 提取源清单必须包含至少两种真实数据源");
   }
-  assertRetrospectiveInput(options.retrospective);
+  if (options.delivery.assets.length === 0) throw new Error("没有可交付资产");
+  if (!deliverTrust) {
+    for (const asset of options.delivery.assets) {
+      assertAssetSourceRevision(asset);
+      assertSubstantiveAsset(asset);
+    }
+    assertRetrospectiveInput(options.retrospective);
+  }
 
   const previous = await loadAcceptanceState(options.repo);
   const sameRun = previous?.runId === options.delivery.runId;
@@ -556,18 +602,30 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
     `# 冲突报告\n\n本次自动门禁检查发现 0 个冲突。\n`,
   );
   const report = renderReport(effectiveOptions, finishedAt);
-  assertReport(report, effectiveAssets);
+  if (!deliverTrust) {
+    assertReport(report, effectiveAssets);
+  }
   contents.set(`${ACCEPTANCE_ROOT}/资产复利实践报告.md`, report);
 
   const evidence = {
     schemaVersion: 1,
     generatedAt: finishedAt,
+    deliverMode: deliverTrust ? "trust-aggregate" : "full-qa",
+    qualityGates: deliverTrust ? "validate-only" : "validate-and-deliver",
     contract: {
       task11StandardDocs: true,
       task21FiveMaterials: true,
       task22CompleteReport: true,
-      requirements: Object.fromEntries(["R1", "R2", "R3", "R4", "R5", "R6"].map((key) => [key, true])),
-      verification: Object.fromEntries(["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"].map((key) => [key, true])),
+      deliverTrustAggregate: deliverTrust,
+      requirements: Object.fromEntries(
+        ["R1", "R2", "R3", "R4", "R5", "R6"].map((key) => [key, deliverTrust ? "deferred-to-validate" : true]),
+      ),
+      verification: Object.fromEntries(
+        ["V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"].map((key) => [
+          key,
+          deliverTrust ? "deferred-to-validate" : true,
+        ]),
+      ),
     },
     sourceTypes: [...sourceTypes].sort(),
     assets: options.delivery.assets.length,
@@ -578,13 +636,21 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
       completedAt: finishedAt,
       sourceHead: effectiveOptions.metadata.head,
       verifiedStateCommit: options.verification.stateCommit,
-      stages: [
-        { stage: "读取与分片", status: "passed" },
-        { stage: "schema / provenance / 证据关联校验", status: "passed" },
-        { stage: "分类回写与冲突检查", status: "passed" },
-        { stage: "二次运行 zero diff", status: "passed" },
-        { stage: "结构、内容、内部链接和写后 hash", status: "passed" },
-      ],
+      stages: deliverTrust
+        ? [
+            { stage: "读取与分片", status: "deferred-to-validate" },
+            { stage: "schema / provenance / 证据关联校验", status: "deferred-to-validate" },
+            { stage: "分类回写与冲突检查", status: "aggregate-write" },
+            { stage: "二次运行 zero diff", status: "skipped-on-deliver" },
+            { stage: "结构、内容、内部链接和写后 hash", status: "skipped-on-deliver" },
+          ]
+        : [
+            { stage: "读取与分片", status: "passed" },
+            { stage: "schema / provenance / 证据关联校验", status: "passed" },
+            { stage: "分类回写与冲突检查", status: "passed" },
+            { stage: "二次运行 zero diff", status: "passed" },
+            { stage: "结构、内容、内部链接和写后 hash", status: "passed" },
+          ],
     },
     provenance: effectiveAssets.map((asset) => ({
       assetId: asset.assetId,
@@ -606,23 +672,32 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
   const directoryTreePath = `${ACCEPTANCE_ROOT}/验证证据/directory-tree.txt`;
   const plannedPaths = [...contents.keys(), directoryTreePath, ACCEPTANCE_STATE].sort();
   contents.set(`${ACCEPTANCE_ROOT}/验证证据/directory-tree.txt`, `${plannedPaths.join("\n")}\n`);
-  assertPackageStructure(contents);
-
-  for (const [relative, expectedHash] of Object.entries(previous?.managedFiles ?? {})) {
-    const target = await safeTarget(options.repo, relative);
-    if (!(await exists(target)) || sha256(await readFile(target)) !== expectedHash) {
-      throw new Error(`标准 docs 受管文件被人工编辑或删除：${relative}`);
-    }
+  if (!deliverTrust) {
+    assertPackageStructure(contents);
   }
-  if (!previous) {
-    for (const relative of contents.keys()) {
+
+  if (!deliverTrust) {
+    for (const [relative, expectedHash] of Object.entries(previous?.managedFiles ?? {})) {
       const target = await safeTarget(options.repo, relative);
-      if (await exists(target)) throw new Error(`标准 docs 已存在且无受管 state，拒绝覆盖：${relative}`);
+      if (!(await exists(target)) || sha256(await readFile(target)) !== expectedHash) {
+        throw new Error(`标准 docs 受管文件被人工编辑或删除：${relative}`);
+      }
     }
-  } else {
-    for (const relative of contents.keys()) {
-      if (!previous.managedFiles[relative] && await exists(await safeTarget(options.repo, relative))) {
-        throw new Error(`标准 docs 发现未受管同名文件，拒绝覆盖：${relative}`);
+    if (!previous) {
+      for (const relative of contents.keys()) {
+        const target = await safeTarget(options.repo, relative);
+        if (await exists(target)) {
+          throw new Error(`标准 docs 已存在且无受管 state，拒绝覆盖：${relative}`);
+        }
+      }
+    } else {
+      for (const relative of contents.keys()) {
+        if (
+          !previous.managedFiles[relative] &&
+          (await exists(await safeTarget(options.repo, relative)))
+        ) {
+          throw new Error(`标准 docs 发现未受管同名文件，拒绝覆盖：${relative}`);
+        }
       }
     }
   }
@@ -656,9 +731,11 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
     encoding: "utf8",
     fsync: true,
   });
-  for (const [relative, expectedHash] of Object.entries(state.managedFiles)) {
-    const actual = sha256(await readFile(await safeTarget(options.repo, relative)));
-    if (actual !== expectedHash) throw new Error(`验收证据写后 hash 校验失败：${relative}`);
+  if (!deliverTrust) {
+    for (const [relative, expectedHash] of Object.entries(state.managedFiles)) {
+      const actual = sha256(await readFile(await safeTarget(options.repo, relative)));
+      if (actual !== expectedHash) throw new Error(`验收证据写后 hash 校验失败：${relative}`);
+    }
   }
 
   return {

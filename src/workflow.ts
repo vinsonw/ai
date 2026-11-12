@@ -6,8 +6,7 @@ import fg from "fast-glob";
 import writeFileAtomic from "write-file-atomic";
 import { stringify as stringifyYaml } from "yaml";
 import {
-  assertRetrospectiveInput,
-  detectAcceptanceMetadata,
+  detectAcceptanceMetadataForDeliver,
   writeAcceptancePackage,
   type RetrospectiveInput,
 } from "./acceptance.js";
@@ -23,7 +22,7 @@ import {
   readState,
   runPipeline,
 } from "./pipeline.js";
-import { assertCompletedShardsFormatOnly, validateShardedInput } from "./shards.js";
+import { assertAllShardsCompleted, validateShardedInput } from "./shards.js";
 import { normalizeRepoPath, repoPathsEquivalent } from "./path-utils.js";
 import type { OmittedRequirementSource, RunConfig } from "./types.js";
 
@@ -553,11 +552,11 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
   const retrospective = JSON.parse(
     await readFile(session.retrospective, "utf8"),
   ) as RetrospectiveInput;
-  assertRetrospectiveInput(retrospective);
-  const metadata = await detectAcceptanceMetadata(repo, session.startedAt);
-  await assertCompletedShardsFormatOnly(session.shards);
+  const metadata = await detectAcceptanceMetadataForDeliver(repo, session.startedAt);
+  await assertAllShardsCompleted(session.shards);
   const delivery = await runPipeline(repo, session.config, session.shards, {
     freezeSources: "trust",
+    fromDeliver: true,
   });
   const state = await readState(repo);
   const verification = {
@@ -578,6 +577,7 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
     metadata,
     retrospective,
     trustDelivered: true,
+    fromDeliver: true,
   });
   return {
     mode: session.mode,

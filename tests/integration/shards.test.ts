@@ -436,9 +436,6 @@ describe("零配置 start/deliver", () => {
       await enrichShard(file);
       await validateShardedInput(file);
     }
-    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
-      "复盘字段",
-    );
     await writeFile(
       started.retrospective,
       `${JSON.stringify(
@@ -447,23 +444,6 @@ describe("零配置 start/deliver", () => {
           frictionAndTime: "TODO",
           coverageGaps: "TODO",
           improvements: "TODO",
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
-      "占位内容",
-    );
-    await writeFile(
-      started.retrospective,
-      `${JSON.stringify(
-        {
-          maxHelp: "分片让小上下文模型可以逐项完成分析并保留断点。",
-          frictionAndTime: "测试实践主要耗时在逐片补充四维证据。",
-          coverageGaps: "当前 fixture 未覆盖真实截图和外部设计平台。",
-          improvements: "后续增加真实仓库截图采集和链接检查。",
         },
         null,
         2,
@@ -489,6 +469,7 @@ describe("零配置 start/deliver", () => {
     expect(report).toContain("# 资产复利实践报告");
     expect(report).toContain("## 环节对照表");
     expect(report).toContain("## 防重复验证");
+    expect(report).toContain("deliver 信任聚合模式");
     expect(report).toContain("证据：");
     expect(report).not.toContain("secret-token");
     expect(report).toContain("https://example.invalid/demo/react-style-fixture.git");
@@ -504,9 +485,14 @@ describe("零配置 start/deliver", () => {
         path.join(repo, "docs/07-AI资产/资产复利/验证证据/verification.json"),
         "utf8",
       ),
-    ) as { contract: { task21FiveMaterials: boolean; task22CompleteReport: boolean } };
+    ) as {
+      deliverMode: string;
+      contract: { task21FiveMaterials: boolean; task22CompleteReport: boolean; deliverTrustAggregate: boolean };
+    };
+    expect(evidence.deliverMode).toBe("trust-aggregate");
     expect(evidence.contract.task21FiveMaterials).toBe(true);
     expect(evidence.contract.task22CompleteReport).toBe(true);
+    expect(evidence.contract.deliverTrustAggregate).toBe(true);
     for (const directory of [
       "00-项目总览",
       "01-业务资产",
@@ -545,9 +531,8 @@ describe("零配置 start/deliver", () => {
 
     const navigation = path.join(repo, "docs/README.md");
     await writeFile(navigation, `${await readFile(navigation, "utf8")}\n人工修改\n`, "utf8");
-    await expect(deliverWorkflow({ cwd: repo, yes: true })).rejects.toThrow(
-      "标准 docs 受管文件被人工编辑",
-    );
+    await deliverWorkflow({ cwd: repo, yes: true });
+    expect(await readFile(navigation, "utf8")).not.toContain("人工修改");
   });
 
   it("validate 后变更来源时 deliver 仍仅聚合信任分片", async () => {

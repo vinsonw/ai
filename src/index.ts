@@ -23,7 +23,9 @@ export {
   verifySecondRun,
 } from "./pipeline.js";
 export {
+  assertAllShardsCompleted,
   assertCompletedShardsFormatOnly,
+  loadShardedAssetsDeliver,
   inputIsDirectory,
   loadShardedAssetsTrust,
   loadShardedDirectory,
