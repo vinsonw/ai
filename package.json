@@ -1,6 +1,6 @@
 {
   "name": "@vinsonw2/asset-compound",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Editor-neutral CLI and protocol for incremental, traceable documentation assets",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,5 +1,6 @@
 import { access, lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
+import { escapesRepositoryRelative, relativePosix } from "./path-utils.js";
 import writeFileAtomic from "write-file-atomic";
 import { assertSubstantiveAsset } from "./quality.js";
 import { currentBranch, git, renderAsset, sha256 } from "./pipeline.js";
@@ -409,15 +410,17 @@ function assertPackageStructure(contents: Map<string, string>): void {
   }
 }
 
-async function safeTarget(repo: string, relative: string): Promise<string> {
+export async function safeTarget(repo: string, relative: string): Promise<string> {
   const root = await realpath(repo);
   const absolute = path.resolve(root, relative);
   const rel = path.relative(root, absolute);
+  const relPosix = relativePosix(rel);
   if (
-    path.isAbsolute(rel) ||
-    rel === ".." ||
-    rel.startsWith(`..${path.sep}`) ||
-    !(rel === "docs/README.md" || STANDARD_DIRECTORIES.some((dir) => rel.startsWith(`docs/${dir}/`)))
+    escapesRepositoryRelative(rel) ||
+    !(
+      relPosix === "docs/README.md" ||
+      STANDARD_DIRECTORIES.some((dir) => relPosix.startsWith(`docs/${dir}/`))
+    )
   ) {
     throw new Error(`标准 docs 写入越界：${relative}`);
   }

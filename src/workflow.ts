@@ -24,6 +24,7 @@ import {
   runPipeline,
 } from "./pipeline.js";
 import { assertCompletedShardsFormatOnly, validateShardedInput } from "./shards.js";
+import { normalizeRepoPath, repoPathsEquivalent } from "./path-utils.js";
 import type { OmittedRequirementSource, RunConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -53,7 +54,8 @@ async function writeText(target: string, content: string): Promise<void> {
 }
 
 async function repositoryContext(cwd: string) {
-  const repo = await git(cwd, ["rev-parse", "--show-toplevel"]);
+  const repoRoot = await git(cwd, ["rev-parse", "--show-toplevel"]);
+  const repo = await normalizeRepoPath(repoRoot);
   const gitDir = await git(repo, ["rev-parse", "--absolute-git-dir"]);
   return { repo, gitDir };
 }
@@ -384,7 +386,10 @@ export async function startWorkflow(options: StartWorkflowOptions = {}) {
     previousSession = JSON.parse(
       await readFile(path.join(workspace, "session.json"), "utf8"),
     ) as WorkflowSession;
-    if (previousSession.schemaVersion !== 2 || previousSession.repo !== repo) {
+    if (
+      previousSession.schemaVersion !== 2 ||
+      !repoPathsEquivalent(previousSession.repo, repo)
+    ) {
       throw new Error("既有 workspace 不是当前验收契约版本；请使用新的 --workspace 重新 start");
     }
     if (
@@ -542,7 +547,7 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
   const session = JSON.parse(
     await readFile(path.join(workspace, "session.json"), "utf8"),
   ) as WorkflowSession;
-  if (session.schemaVersion !== 2 || session.repo !== repo) {
+  if (session.schemaVersion !== 2 || !repoPathsEquivalent(session.repo, repo)) {
     throw new Error("workspace session 与当前 Git 仓库不匹配；请先运行 start");
   }
   const retrospective = JSON.parse(

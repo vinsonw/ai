@@ -20,6 +20,11 @@ import {
   readShardManifest,
   type PrepareShardsOptions,
 } from "./shards.js";
+import {
+  escapesRepositoryRelative,
+  posixifyRepoRelativePath,
+  relativePosix,
+} from "./path-utils.js";
 import type {
   AssetRecord,
   Conflict,
@@ -510,12 +515,10 @@ export async function assertOutputPath(repo: string, target: string): Promise<st
   const root = await realpath(repo);
   const absolute = path.resolve(root, target);
   const relative = path.relative(root, absolute);
-  const relativePosix = relative.split(/[/\\]/).join("/");
+  const relativePosixPath = relativePosix(relative);
   if (
-    path.isAbsolute(relative) ||
-    relativePosix === ".." ||
-    relativePosix.startsWith("../") ||
-    !(relativePosix === OUTPUT_ROOT || relativePosix.startsWith(`${OUTPUT_ROOT}/`))
+    escapesRepositoryRelative(relative) ||
+    !(relativePosixPath === OUTPUT_ROOT || relativePosixPath.startsWith(`${OUTPUT_ROOT}/`))
   ) {
     throw new Error(`拒绝写入 ${OUTPUT_ROOT} 之外的路径：${target}`);
   }
@@ -608,11 +611,7 @@ async function scanFileSet(
       const root = await realpath(repo);
       const absolute = path.resolve(root, file);
       const relative = path.relative(root, absolute);
-      if (
-        path.isAbsolute(relative) ||
-        relative === ".." ||
-        relative.startsWith(`..${path.sep}`)
-      ) {
+      if (escapesRepositoryRelative(relative)) {
         throw new Error(`拒绝读取仓库之外的来源：${file}`);
       }
       const stat = await lstat(absolute);
@@ -805,7 +804,7 @@ async function rehydrateFileProvenance(repo: string, provenance: ShardProvenance
   const root = await realpath(repo);
   const absolute = path.resolve(root, file);
   const relative = path.relative(root, absolute);
-  if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+  if (escapesRepositoryRelative(relative)) {
     throw new Error(`拒绝读取仓库之外的冻结来源：${file}`);
   }
   const stat = await lstat(absolute);
@@ -1599,12 +1598,7 @@ export async function verifyGitScope(repo: string): Promise<string[]> {
       index += 1;
     }
   }
-  const outside = paths.filter(
-    (file) =>
-      file !== OUTPUT_ROOT &&
-      !file.startsWith(`${OUTPUT_ROOT}/`) &&
-      !isStandardManagedOutput(file),
-  );
+  const outside = paths.filter((file) => !isAllowedDeliverGitChange(file));
   if (outside.length) {
     throw new Error(`检测到 ${OUTPUT_ROOT} 之外的改动：${outside.join("、")}`);
   }
@@ -1616,6 +1610,16 @@ function isStandardManagedOutput(file: string): boolean {
   if (/^docs\/(?:0[0-7]-[^/]+)\/README\.md$/u.test(file)) return true;
   if (/^docs\/(?:0[1-7]-[^/]+)\/[0-9a-f]{64}\.md$/u.test(file)) return true;
   return /^docs\/07-AI资产\/资产复利\/(?:资产复利实践报告\.md|提取源清单\.md|回写记录\.md|冲突报告\.md|state\.json|验证证据\/(?:verification\.json|directory-tree\.txt))$/u.test(file);
+}
+
+/** Classify a git status path for deliver scope (POSIX-normalized prefix checks). */
+export function isAllowedDeliverGitChange(file: string): boolean {
+  const posix = posixifyRepoRelativePath(file);
+  return (
+    posix === OUTPUT_ROOT ||
+    posix.startsWith(`${OUTPUT_ROOT}/`) ||
+    isStandardManagedOutput(posix)
+  );
 }
 
 export async function runPipeline(
