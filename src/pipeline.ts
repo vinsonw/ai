@@ -17,6 +17,7 @@ import {
   inputIsDirectory,
   loadShardedDirectory,
   prepareShards,
+  readShardManifest,
   type PrepareShardsOptions,
 } from "./shards.js";
 import type {
@@ -28,6 +29,8 @@ import type {
   RunConfig,
   ScanRecord,
   GitScanPolicy,
+  ShardManifest,
+  ShardProvenance,
   SkippedGitCommit,
   SkippedGitFileWithinCommit,
   SourceSet,
@@ -675,6 +678,178 @@ export interface GitScanStats {
   maxEffectiveCommits: number;
 }
 
+function parseGitSourceRef(sourceRef: string): { commit: string; filePath: string } {
+  const match = /^git:([0-9a-f]{40}):(.+)$/u.exec(sourceRef);
+  if (!match) {
+    throw new Error(`无法解析冻结 Git 来源引用：${sourceRef}`);
+  }
+  return { commit: match[1]!, filePath: match[2]! };
+}
+
+async function loadGitCommitMeta(repo: string, commit: string): Promise<GitCommitMeta> {
+  const output = await git(repo, ["show", "-s", "--format=%H%x1f%s%x1f%b%x1f%at", commit]);
+  const [parsedCommit = "", subject = "", body = "", authoredEpoch = ""] = output.split("\x1f");
+  return { commit: parsedCommit || commit, subject, body, authoredEpoch };
+}
+
+async function buildGitScanRecord(
+  repo: string,
+  commit: string,
+  change: GitFileChange,
+  meta: GitCommitMeta,
+  firstParent: string | undefined,
+): Promise<ScanRecord> {
+  const { subject, body, authoredEpoch } = meta;
+  const pathspecs = [change.oldPath, change.path]
+    .filter((file): file is string => file !== undefined)
+    .map((file) => `:(literal)${file}`);
+  const patchArgs = firstParent
+    ? [
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--find-renames",
+        "--unified=3",
+        firstParent,
+        commit,
+        "--",
+        ...pathspecs,
+      ]
+    : [
+        "show",
+        "--format=",
+        "--no-color",
+        "--no-ext-diff",
+        "--find-renames",
+        "--unified=3",
+        commit,
+        "--",
+        ...pathspecs,
+      ];
+  const capture = await gitBounded(repo, patchArgs, GIT_PATCH_CAPTURE_BYTES);
+  const patch = truncateGitPatch(capture.output, capture);
+  const postImage = await gitPostImage(repo, commit, change.path, capture.output, change.status);
+  const content = [
+    `GIT_COMMIT\t${commit}`,
+    `GIT_FILE\t${change.path}`,
+    ...(change.oldPath ? [`GIT_OLD_PATH\t${change.oldPath}`] : []),
+    `GIT_STATUS\t${change.status}`,
+    `GIT_SUBJECT\t${subject}`,
+    "GIT_BODY_BEGIN",
+    body,
+    "GIT_BODY_END",
+    `GIT_AUTHORED_EPOCH\t${authoredEpoch}`,
+    "PATCH_BEGIN",
+    patch,
+    "PATCH_END",
+    postImage,
+  ].join("\n");
+  return {
+    sourceType: "git",
+    sourceRef: `git:${commit}:${change.path}`,
+    sourceRevision: commit,
+    contentHash: sha256(content),
+    content,
+  };
+}
+
+function assertFrozenProvenance(record: ScanRecord, provenance: ShardProvenance, label: string): void {
+  if (record.sourceType !== provenance.sourceType) {
+    throw new Error(`${label} 来源类型与 manifest 不一致：${provenance.sourceRef}`);
+  }
+  if (record.sourceRef !== provenance.sourceRef) {
+    throw new Error(`${label} 来源引用与 manifest 不一致：${provenance.sourceRef}`);
+  }
+  if (record.sourceRevision !== provenance.sourceRevision) {
+    throw new Error(
+      `${label} 来源版本与 manifest 不一致：期望 ${provenance.sourceRevision}，当前 ${record.sourceRevision}`,
+    );
+  }
+  if (record.contentHash !== provenance.contentHash) {
+    throw new Error(
+      `${label} 内容指纹与 manifest 不一致：期望 ${provenance.contentHash}，当前 ${record.contentHash}`,
+    );
+  }
+}
+
+async function rehydrateGitProvenance(repo: string, provenance: ShardProvenance): Promise<ScanRecord> {
+  if (provenance.sourceType !== "git") {
+    throw new Error(`冻结来源类型不匹配：${provenance.sourceRef}`);
+  }
+  const { commit, filePath } = parseGitSourceRef(provenance.sourceRef);
+  if (provenance.sourceRevision !== commit) {
+    throw new Error(
+      `manifest Git 来源版本与引用不一致：${provenance.sourceRef}（${provenance.sourceRevision}）`,
+    );
+  }
+  const { firstParent, changes } = await loadCommitFileChanges(repo, commit);
+  const change = changes.find((entry) => entry.path === filePath);
+  if (!change) {
+    throw new Error(`冻结 Git 来源在提交 ${commit} 中找不到路径 ${filePath}`);
+  }
+  const meta = await loadGitCommitMeta(repo, commit);
+  const record = await buildGitScanRecord(repo, commit, change, meta, firstParent);
+  assertFrozenProvenance(record, provenance, "冻结 Git 来源");
+  return record;
+}
+
+async function rehydrateFileProvenance(repo: string, provenance: ShardProvenance): Promise<ScanRecord> {
+  if (provenance.sourceType === "git") {
+    throw new Error(`冻结文件来源不能为 git 类型：${provenance.sourceRef}`);
+  }
+  const file = provenance.sourceRef;
+  if (redactSensitive(file) !== file) {
+    throw new Error(`拒绝包含敏感信息的冻结来源路径：${file}`);
+  }
+  const root = await realpath(repo);
+  const absolute = path.resolve(root, file);
+  const relative = path.relative(root, absolute);
+  if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new Error(`拒绝读取仓库之外的冻结来源：${file}`);
+  }
+  const stat = await lstat(absolute);
+  if (stat.isSymbolicLink()) throw new Error(`拒绝符号链接冻结来源：${file}`);
+  const resolvedSource = await realpath(absolute);
+  if (resolvedSource !== absolute) {
+    throw new Error(`拒绝通过符号链接逃逸仓库的冻结来源：${file}`);
+  }
+  const buffer = await readFile(absolute);
+  const text = buffer.toString("utf8");
+  const isText = /\.(?:md|mdx|txt|json|ya?ml|tsx?|jsx?|css|html)$/i.test(file);
+  const sourceRevision = await fileRevision(repo, file);
+  const record: ScanRecord = {
+    sourceType: provenance.sourceType,
+    sourceRef: file.split(path.sep).join("/"),
+    sourceRevision,
+    contentHash: sha256(isText ? text : buffer),
+    content: text,
+  };
+  assertFrozenProvenance(record, provenance, "冻结文件来源");
+  return record;
+}
+
+export async function rehydrateRecordsFromManifest(
+  repo: string,
+  manifest: ShardManifest,
+  config: RunConfig,
+): Promise<ScanRecord[]> {
+  void config;
+  const records: ScanRecord[] = [];
+  for (const provenance of manifest.assets) {
+    records.push(
+      provenance.sourceType === "git"
+        ? await rehydrateGitProvenance(repo, provenance)
+        : await rehydrateFileProvenance(repo, provenance),
+    );
+  }
+  return records;
+}
+
+export interface RunPipelineOptions {
+  freezeSources?: boolean | "manifest";
+  manifest?: ShardManifest;
+}
+
 async function scanGitSet(
   repo: string,
   source: SourceSet,
@@ -758,57 +933,15 @@ async function scanGitSet(
       ) {
         throw new Error(`拒绝包含敏感信息的 Git 来源路径：${change.path}`);
       }
-      const pathspecs = [change.oldPath, change.path]
-        .filter((file): file is string => file !== undefined)
-        .map((file) => `:(literal)${file}`);
-      const patchArgs = firstParent
-        ? [
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            "--find-renames",
-            "--unified=3",
-            firstParent,
-            commit,
-            "--",
-            ...pathspecs,
-          ]
-        : [
-            "show",
-            "--format=",
-            "--no-color",
-            "--no-ext-diff",
-            "--find-renames",
-            "--unified=3",
-            commit,
-            "--",
-            ...pathspecs,
-          ];
-      const capture = await gitBounded(repo, patchArgs, GIT_PATCH_CAPTURE_BYTES);
-      const patch = truncateGitPatch(capture.output, capture);
-      const postImage = await gitPostImage(repo, commit, change.path, capture.output, change.status);
-      const content = [
-        `GIT_COMMIT\t${commit}`,
-        `GIT_FILE\t${change.path}`,
-        ...(change.oldPath ? [`GIT_OLD_PATH\t${change.oldPath}`] : []),
-        `GIT_STATUS\t${change.status}`,
-        `GIT_SUBJECT\t${subject}`,
-        "GIT_BODY_BEGIN",
-        body,
-        "GIT_BODY_END",
-        `GIT_AUTHORED_EPOCH\t${authoredEpoch}`,
-        "PATCH_BEGIN",
-        patch,
-        "PATCH_END",
-        postImage,
-      ].join("\n");
-      records.push({
-        sourceType: "git",
-        sourceRef: `git:${commit}:${change.path}`,
-        sourceRevision: commit,
-        contentHash: sha256(content),
-        content,
-      });
+      records.push(
+        await buildGitScanRecord(
+          repo,
+          commit,
+          change,
+          { commit, subject, body, authoredEpoch },
+          firstParent,
+        ),
+      );
     }
   }
   if (records.length === 0) {
@@ -1464,6 +1597,7 @@ export async function runPipeline(
   repoInput: string,
   configPath: string,
   assetsFile?: string,
+  options: RunPipelineOptions = {},
 ): Promise<PipelineResult> {
   const repo = await realpath(repoInput);
   const config = await loadConfig(configPath);
@@ -1474,8 +1608,21 @@ export async function runPipeline(
   }
   await verifyGitScope(repo);
   const previous = await readState(repo);
-  const scanned = await scanDetailed(repo, config);
-  const records = scanned.records;
+  const freezeSources = options.freezeSources === true || options.freezeSources === "manifest";
+  let records: ScanRecord[];
+  let skippedGitCommits: SkippedGitCommit[] = [];
+  if (freezeSources) {
+    if (!assetsFile || !(await inputIsDirectory(assetsFile))) {
+      throw new Error("freezeSources 仅支持已完成的分片目录输入");
+    }
+    const manifest = options.manifest ?? (await readShardManifest(assetsFile));
+    records = await rehydrateRecordsFromManifest(repo, manifest, config);
+    skippedGitCommits = manifest.skippedGitCommits ?? [];
+  } else {
+    const scanned = await scanDetailed(repo, config);
+    records = scanned.records;
+    skippedGitCommits = scanned.skippedGitCommits;
+  }
   const baselineAssets = prepare(records, previous);
   if (!assetsFile) {
     throw new Error(
@@ -1495,7 +1642,7 @@ export async function runPipeline(
     records,
     assets,
     previous,
-    scanned.skippedGitCommits,
+    skippedGitCommits,
   );
   await verifyGitScope(repo);
   return {
