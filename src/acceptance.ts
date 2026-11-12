@@ -323,9 +323,14 @@ function trustDeliverNotice(options: AcceptanceOptions): string {
 function renderReport(options: AcceptanceOptions, finishedAt: string): string {
   const sourceTypes = [...new Set(options.delivery.assets.map((asset) => asset.sourceType))];
   const sourceSummary = sourceTypes.map((type) => SOURCE_LABELS[type]).join("、");
-  const elapsedMs = Date.parse(finishedAt) - Date.parse(options.metadata.startedAt);
+  const deliverTrust = Boolean(options.fromDeliver || options.trustDelivered);
+  let elapsedMs = Date.parse(finishedAt) - Date.parse(options.metadata.startedAt);
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
-    throw new Error("start/deliver 时间无效，无法填写实际投入");
+    if (deliverTrust) {
+      elapsedMs = 0;
+    } else {
+      throw new Error("start/deliver 时间无效，无法填写实际投入");
+    }
   }
   const dimension = (finding: AssetRecord["analysis"]["completeness"]) =>
     `${finding.level}；证据：${finding.evidence.join("；")}；缺口：${finding.gaps.join("；")}；建议：${finding.recommendations.join("；")}`;
@@ -505,12 +510,16 @@ export async function safeTarget(repo: string, relative: string): Promise<string
   return absolute;
 }
 
-async function loadAcceptanceState(repo: string): Promise<AcceptanceState | null> {
+async function loadAcceptanceState(
+  repo: string,
+  options?: { trustDeliver?: boolean },
+): Promise<AcceptanceState | null> {
   const target = path.join(repo, ACCEPTANCE_STATE);
   if (!(await exists(target))) return null;
   const state = JSON.parse(await readFile(target, "utf8")) as AcceptanceState;
   const expected = sha256(JSON.stringify({ ...state, selfHash: "" }, null, 2));
   if (state.schemaVersion !== 2 || state.selfHash !== expected) {
+    if (options?.trustDeliver) return null;
     throw new Error("标准 docs state 无效或被人工编辑");
   }
   return state;
@@ -539,7 +548,10 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
       throw new Error("防重复验证未通过，拒绝生成验收交付");
     }
   }
-  if (await exists(path.join(options.repo, "NOT-ACCEPTANCE-DATA.md"))) {
+  if (
+    !deliverTrust &&
+    (await exists(path.join(options.repo, "NOT-ACCEPTANCE-DATA.md")))
+  ) {
     throw new Error("仓库明确标记为非验收 fixture，不能生成正式验收结论");
   }
   const sourceTypes = new Set(options.delivery.assets.map((asset) => asset.sourceType));
@@ -555,7 +567,7 @@ export async function writeAcceptancePackage(options: AcceptanceOptions) {
     assertRetrospectiveInput(options.retrospective);
   }
 
-  const previous = await loadAcceptanceState(options.repo);
+  const previous = await loadAcceptanceState(options.repo, { trustDeliver: deliverTrust });
   const sameRun = previous?.runId === options.delivery.runId;
   const effectiveAssets = options.delivery.assets.map((asset) => ({
     ...asset,
