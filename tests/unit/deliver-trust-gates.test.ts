@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { writeAcceptancePackage } from "../../src/acceptance.js";
-import { git, prepare } from "../../src/pipeline.js";
+import { git, prepare, readState } from "../../src/pipeline.js";
 import {
   assertAllShardsCompleted,
   loadShardedAssetsDeliver,
@@ -187,6 +187,31 @@ describe("deliver 信任聚合门禁", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("deliver 信任聚合：跳过分片敏感数据重检"),
     );
+    warn.mockRestore();
+  });
+
+  it("readState trustDeliver 时损坏 selfHash 不 throw", async () => {
+    const repo = await initRepo();
+    const stateDir = path.join(repo, "docs/可读化/state");
+    await mkdir(stateDir, { recursive: true });
+    const broken = {
+      schemaVersion: 1,
+      selfHash: "sha256:deadbeef",
+      baseBranch: "main",
+      baseCommit: "b".repeat(40),
+      lastReadCommit: "c".repeat(40),
+      sources: {},
+      assets: {},
+      managedFiles: {},
+    };
+    await writeFile(
+      path.join(stateDir, "read-state.json"),
+      `${JSON.stringify(broken, null, 2)}\n`,
+      "utf8",
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(readState(repo, { trustDeliver: true })).resolves.toBeNull();
+    await expect(readState(repo)).rejects.toThrow("selfHash");
     warn.mockRestore();
   });
 });

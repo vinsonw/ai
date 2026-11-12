@@ -558,7 +558,7 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
     freezeSources: "trust",
     fromDeliver: true,
   });
-  const state = await readState(repo);
+  const state = await readState(repo, { trustDeliver: true });
   const verification = {
     secondRunZeroDiff: true,
     counts: {
@@ -571,7 +571,7 @@ export async function deliverWorkflow(options: DeliverWorkflowOptions = {}) {
   };
   const acceptance = await writeAcceptancePackage({
     repo,
-    config: await loadConfig(session.config),
+    config: await loadConfig(session.config, { trustDeliver: true }),
     delivery,
     verification,
     metadata,

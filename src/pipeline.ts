@@ -552,11 +552,14 @@ export async function atomicWriteIfChanged(
   return true;
 }
 
-export async function loadConfig(configPath: string): Promise<RunConfig> {
+export async function loadConfig(
+  configPath: string,
+  options?: { trustDeliver?: boolean },
+): Promise<RunConfig> {
   const value = parseYaml(await readFile(configPath, "utf8")) as unknown;
   assertValid(validateConfig, value, "运行配置");
   const types = new Set(value.sourceSets.map((source) => source.type));
-  if (types.size < 2) {
+  if (!options?.trustDeliver && types.size < 2) {
     throw new Error("V2 要求至少两种不同的来源类型");
   }
   return value;
@@ -1251,13 +1254,28 @@ ${renderDimension("复用价值", asset.analysis.reuseValue)}
 `;
 }
 
-export async function readState(repo: string): Promise<ReadState | null> {
+export async function readState(
+  repo: string,
+  options?: { trustDeliver?: boolean },
+): Promise<ReadState | null> {
   const statePath = path.join(repo, OUTPUT_ROOT, "state/read-state.json");
   if (!(await exists(statePath))) return null;
   const value = JSON.parse(await readFile(statePath, "utf8")) as unknown;
-  assertValid(validateState, value, "读取状态");
+  try {
+    assertValid(validateState, value, "读取状态");
+  } catch (error) {
+    if (options?.trustDeliver) {
+      console.warn("deliver 信任聚合：跳过损坏的 docs/可读化 read-state.json");
+      return null;
+    }
+    throw error;
+  }
   const expected = sha256(JSON.stringify({ ...value, selfHash: "" }, null, 2));
   if (value.selfHash !== expected) {
+    if (options?.trustDeliver) {
+      console.warn("deliver 信任聚合：read-state selfHash 不匹配，按无 state 聚合写盘");
+      return null;
+    }
     throw new Error("读取状态的 selfHash 不匹配；拒绝覆盖已编辑的 state");
   }
   return value;
@@ -1597,7 +1615,9 @@ export async function render(
     managedFiles,
   };
   nextState.selfHash = sha256(JSON.stringify({ ...nextState, selfHash: "" }, null, 2));
-  assertValid(validateState, nextState, "下一版状态");
+  if (!options.fromDeliver) {
+    assertValid(validateState, nextState, "下一版状态");
+  }
 
   for (const [file, content] of Object.entries(managedContents)) {
     await write(file, content);
@@ -1653,7 +1673,9 @@ export async function runPipeline(
   options: RunPipelineOptions = {},
 ): Promise<PipelineResult> {
   const repo = await realpath(repoInput);
-  const config = await loadConfig(configPath);
+  const config = await loadConfig(configPath, {
+    trustDeliver: options.fromDeliver === true,
+  });
   const branch = await currentBranch(repo);
   const baseBranch = config.baseBranch ?? "main";
   if (!options.fromDeliver && (!branch || branch === baseBranch)) {
@@ -1662,7 +1684,7 @@ export async function runPipeline(
   if (!options.fromDeliver) {
     await verifyGitScope(repo);
   }
-  const previous = await readState(repo);
+  const previous = await readState(repo, { trustDeliver: options.fromDeliver === true });
   const trustShards = options.freezeSources === "trust" || options.fromDeliver;
   const freezeSources =
     options.freezeSources === true || options.freezeSources === "manifest";
