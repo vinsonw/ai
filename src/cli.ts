@@ -54,7 +54,7 @@ async function main(): Promise<void> {
     .name("asset-compound")
     .description("生成标准 docs 分类目录和可增量、可追溯的验收资产")
     .usage("[选项] <命令>")
-    .version("0.1.12", "-V, --version", "显示版本")
+    .version("0.1.13", "-V, --version", "显示版本")
     .helpOption("-h, --help", "显示帮助")
     .addHelpCommand("help [command]", "显示指定命令的帮助")
     .showHelpAfterError("（使用 --help 查看帮助）")

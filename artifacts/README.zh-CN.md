@@ -1,6 +1,6 @@
-# `asset-compound` 0.1.12 离线安装包
+# `asset-compound` 0.1.13 离线安装包
 
-`asset-compound-0.1.12.tgz` 以本 PR 合并后的 `main` 为唯一源码基线，包含
+`asset-compound-0.1.13.tgz` 以本 PR 合并后的 `main` 为唯一源码基线，包含
 deliver 信任分片路径（全部 validate 完成后仅 `assertCompletedShardsFormatOnly`
 聚合，不再 `rehydrate`/`verifySecondRun`）、CLI finalize 仍可用
 `freezeSources=manifest` 重验来源、有效 Git 提交扫描与保守事务过滤、`start`
@@ -14,9 +14,9 @@ registry 网络访问、没有预热 npm cache 的干净目录中本地安装；
 从 `0.1.10` 升级：删除旧内层 `asset-compound-0.1.10.tgz`，仅保留本文件作为
 唯一 canonical 离线 payload；校验 SHA-256 后重新 `npm install --offline`。
 
-生成过程先用 `0.1.12` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
+生成过程先用 `0.1.13` 的 npm packlist 建立不含 `artifacts/` 的干净 staging，
 再仅向 staging 的 `package.json` 加入 `bundledDependencies` 并安装生产依赖。
-内层与 npm 发布版本同为 `0.1.12`，因此不会递归包含自身。
+内层与 npm 发布版本同为 `0.1.13`，因此不会递归包含自身。
 
 ## 校验
 
@@ -29,18 +29,18 @@ sha256sum -c SHA256SUMS
 在 PowerShell 中可运行：
 
 ```powershell
-(Get-FileHash .\asset-compound-0.1.12.tgz -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\asset-compound-0.1.13.tgz -Algorithm SHA256).Hash.ToLower()
 ```
 
 结果必须与 `SHA256SUMS` 中的值完全一致。
 
 ## 同步到其他平台后安装
 
-将 `asset-compound-0.1.12.tgz` 下载或同步到目标平台，校验 SHA-256 后，在
+将 `asset-compound-0.1.13.tgz` 下载或同步到目标平台，校验 SHA-256 后，在
 tarball 所在目录执行：
 
 ```bash
-npm install --offline ./asset-compound-0.1.12.tgz
+npm install --offline ./asset-compound-0.1.13.tgz
 npx asset-compound --version
 npx asset-compound --help
 ```
@@ -48,7 +48,7 @@ npx asset-compound --help
 也可以直接执行本地包中的 CLI：
 
 ```bash
-npx --offline --yes --package ./asset-compound-0.1.12.tgz asset-compound --help
+npx --offline --yes --package ./asset-compound-0.1.13.tgz asset-compound --help
 ```
 
 在目标 Git 仓库创建独立分支并准备至少一个真实 requirement 文件后，可运行：
@@ -63,5 +63,5 @@ npx asset-compound start --yes
 npx asset-compound deliver --yes
 ```
 
-该文件固定为内层 `0.1.12` payload。外层 `0.1.12` pack 必须输出到仓库外的临时
+该文件固定为内层 `0.1.13` payload。外层 `0.1.13` pack 必须输出到仓库外的临时
 目录，并验证只包含这一份内层 tgz 且 SHA-256 与 `SHA256SUMS` 一致。
