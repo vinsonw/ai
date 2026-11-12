@@ -6,6 +6,7 @@ import {
   git,
   currentBranch,
   inspectPipeline,
+  loadAssetsInput,
   loadConfig,
   prepare,
   rehydrateRecordsFromManifest,
@@ -504,5 +505,61 @@ sourceSets:
     const result = await runPipeline(repo, config, work, { freezeSources: true });
     expect(result.inputFormat).toBe("sharded-directory");
     expect(result.conflicts).toEqual([]);
+  });
+
+  it("rehydrates untracked requirement after commit when content is unchanged", async () => {
+    const repo = await createRepository();
+    const config = path.join(repo, "run.yaml");
+    const work = path.join(path.dirname(repo), `${path.basename(repo)}-untracked-commit-shards`);
+    temporary.push(work);
+    const requirementPath = path.join(repo, "docs/requirements/untracked-deliver.md");
+    await mkdir(path.dirname(requirementPath), { recursive: true });
+    await writeFile(
+      requirementPath,
+      "# Untracked deliver requirement\n\nMust keep this sentence stable for manifest rehydrate.\n",
+      "utf8",
+    );
+
+    const inspected = await inspectPipeline(repo, config);
+    const frozenRequirement = inspected.records.find(
+      (record) => record.sourceRef === "docs/requirements/untracked-deliver.md",
+    );
+    expect(frozenRequirement?.sourceRevision).toBe("untracked");
+
+    const prepared = await prepareShards(inspected.records, inspected.assets, work, {
+      skippedGitCommits: inspected.skippedGitCommits,
+    });
+    for (const file of prepared.pendingShards) {
+      const shard = JSON.parse(await readFile(file, "utf8")) as AssetShard;
+      shard.items = shard.items.map((item) => {
+        const asset = enrichAssets([item.asset])[0]!;
+        for (const finding of Object.values(asset.analysis)) {
+          finding.evidence.unshift(`本资产来源证据：${item.sourceExcerpt.text}`);
+        }
+        return { ...item, asset };
+      });
+      await writeFile(file, `${JSON.stringify(shard, null, 2)}\n`, "utf8");
+      await validateShardedInput(file);
+    }
+    await validateShardedInput(work);
+
+    await git(repo, ["add", "docs/requirements/untracked-deliver.md"]);
+    await git(repo, ["commit", "-m", "docs: commit prepared requirement"]);
+
+    const manifest = await readShardManifest(work);
+    const configLoaded = await loadConfig(config);
+    const rehydrated = await rehydrateRecordsFromManifest(repo, manifest, configLoaded);
+    const rehydratedRequirement = rehydrated.find(
+      (record) => record.sourceRef === "docs/requirements/untracked-deliver.md",
+    );
+    expect(rehydratedRequirement?.sourceRevision).toBe("untracked");
+    expect(rehydratedRequirement?.contentHash).toBe(frozenRequirement?.contentHash);
+
+    const loaded = await loadAssetsInput(work, rehydrated);
+    expect(loaded.assets.length).toBe(rehydrated.length);
+
+    const result = await runPipeline(repo, config, work, { freezeSources: true });
+    expect(result.conflicts).toEqual([]);
+    expect(result.inputFormat).toBe("sharded-directory");
   });
 });

@@ -816,15 +816,25 @@ async function rehydrateFileProvenance(repo: string, provenance: ShardProvenance
   const buffer = await readFile(absolute);
   const text = buffer.toString("utf8");
   const isText = /\.(?:md|mdx|txt|json|ya?ml|tsx?|jsx?|css|html)$/i.test(file);
-  const sourceRevision = await fileRevision(repo, file);
+  const liveContentHash = sha256(isText ? text : buffer);
+  if (liveContentHash !== provenance.contentHash) {
+    throw new Error(
+      `冻结文件来源 内容指纹与 manifest 不一致：期望 ${provenance.contentHash}，当前 ${liveContentHash}`,
+    );
+  }
   const record: ScanRecord = {
     sourceType: provenance.sourceType,
-    sourceRef: file.split(path.sep).join("/"),
-    sourceRevision,
-    contentHash: sha256(isText ? text : buffer),
+    sourceRef: provenance.sourceRef,
+    sourceRevision: provenance.sourceRevision,
+    contentHash: provenance.contentHash,
     content: text,
   };
-  assertFrozenProvenance(record, provenance, "冻结文件来源");
+  if (record.sourceType !== provenance.sourceType) {
+    throw new Error(`冻结文件来源 来源类型与 manifest 不一致：${provenance.sourceRef}`);
+  }
+  if (record.sourceRef !== provenance.sourceRef) {
+    throw new Error(`冻结文件来源 来源引用与 manifest 不一致：${provenance.sourceRef}`);
+  }
   return record;
 }
 
